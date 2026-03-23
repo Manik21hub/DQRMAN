@@ -4,6 +4,8 @@ This file handles all CRYSTALS-Dilithium cryptography via the liboqs library.
 To change the algorithm used by the project, update this file only.
 """
 
+import hashlib
+
 try:
     import oqs
     OQS_AVAILABLE = True
@@ -61,3 +63,7 @@ class CryptoModule:
                 return v.verify(message, signature, public_key)
         except:
             return False
+
+    def derive_node_id(self, public_key: bytes) -> str:
+        """Derive a node ID cryptographically bound to its key; forging identity requires forging the private key."""
+        return hashlib.sha256(public_key).hexdigest()
