@@ -5,6 +5,7 @@ To change the algorithm used by the project, update this file only.
 """
 
 import hashlib
+import secrets
 
 try:
     import oqs
@@ -67,3 +68,7 @@ class CryptoModule:
     def derive_node_id(self, public_key: bytes) -> str:
         """Derive a node ID cryptographically bound to its key; forging identity requires forging the private key."""
         return hashlib.sha256(public_key).hexdigest()
+
+    def generate_nonce(self) -> bytes:
+        """Generate a 256-bit (32-byte) cryptographically secure nonce; use secrets instead of random because secrets uses the OS cryptographic random generator."""
+        return secrets.token_bytes(32)
