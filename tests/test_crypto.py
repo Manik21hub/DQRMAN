@@ -1,4 +1,6 @@
 import pytest
+import os
+import time
 
 from backend.crypto import CryptoError, CryptoModule
 
@@ -75,3 +77,25 @@ def test_derive_node_id_is_deterministic(cm: CryptoModule) -> None:
     node_id_1 = cm.derive_node_id(public_key)
     node_id_2 = cm.derive_node_id(public_key)
     assert node_id_1 == node_id_2
+
+
+def test_sign_verify_latency() -> None:
+    cm = CryptoModule()
+    public_key, private_key = cm.generate_keypair()
+    message = b"latency test"
+    durations = []
+
+    for _ in range(1000):
+        start = time.perf_counter()
+        signature = cm.sign(private_key, message)
+        assert cm.verify(public_key, message, signature) is True
+        durations.append(time.perf_counter() - start)
+
+    durations.sort()
+    p50 = durations[499]
+    p95 = durations[949]
+    p99 = durations[989]
+    threshold_ms = float(os.getenv("AUTH_LATENCY_MS", "200"))
+
+    print(f"p50={p50 * 1000:.3f}ms p95={p95 * 1000:.3f}ms p99={p99 * 1000:.3f}ms")
+    assert durations[949] < (threshold_ms / 1000.0)
