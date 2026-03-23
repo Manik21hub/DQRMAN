@@ -43,3 +43,21 @@ class CryptoModule:
             return public_key, private_key
         except Exception as exc:
             raise CryptoError(f"Failed to generate keypair: {exc}") from exc
+
+    def sign(self, private_key: bytes, message: bytes) -> bytes:
+        """Sign a message using Dilithium3; for Dilithium3, signature size is 3293 bytes."""
+        try:
+            with oqs.Signature(self.algorithm, secret_key=private_key) as signer:
+                return signer.sign(message)
+        except Exception as exc:
+            raise CryptoError(f"Failed to sign message: {exc}") from exc
+
+    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
+        if not all([public_key, message, signature]):
+            return False
+
+        try:
+            with oqs.Signature(self.algorithm) as v:
+                return v.verify(message, signature, public_key)
+        except:
+            return False
