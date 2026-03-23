@@ -33,3 +33,13 @@ class CryptoModule:
             )
 
         self.algorithm = algorithm
+
+    def generate_keypair(self) -> tuple[bytes, bytes]:
+        """Generate a Dilithium keypair; for Dilithium3, public key is 1952 bytes and private key is 4000 bytes."""
+        try:
+            with oqs.Signature(self.algorithm) as signer:
+                public_key = signer.generate_keypair()
+                private_key = signer.export_secret_key()
+            return public_key, private_key
+        except Exception as exc:
+            raise CryptoError(f"Failed to generate keypair: {exc}") from exc
