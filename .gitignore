@@ -1,8 +1,27 @@
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+.env.*
+
 # Virtual environments
 oqs-env/
 venv/
-.env/
+.venv/
 
-# Python
-__pycache__/
-*.pyc
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+
+# IDE/editor settings
+.idea/
+.vscode/
+
+# Downloaded map tiles
+frontend/vendor/tiles/
