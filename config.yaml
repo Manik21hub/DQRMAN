@@ -1,0 +1,31 @@
+simulation: # Simulation behavior settings
+  node_count: 10 # Number of nodes to simulate
+  auto_auth: true # Automatically run authentication flow
+
+crypto: # Cryptography algorithm settings
+  dilithium_variant: Dilithium3 # Dilithium security variant to use
+
+network: # Mesh network timing and path settings
+  heartbeat_interval: 1.0 # Seconds between heartbeat messages
+  heartbeat_timeout: 3 # Seconds before a node is considered offline
+  time_sync_window: 5.0 # Allowed clock drift window in seconds
+  trust_path_timeout: 100 # Milliseconds to wait for trust path resolution
+
+security: # Security monitoring thresholds
+  anomaly_threshold: 5 # Number of anomalies before triggering alert
+  anomaly_window: 30 # Time window in seconds for anomaly counting
+
+server: # API server bind configuration
+  host: 0.0.0.0 # Server bind address
+  port: 8080 # Server listen port
+
+logging: # Logging output configuration
+  log_file: logs/dqrman.log # Path to the log file
+  level: INFO # Minimum log level to record
+
+osm: # OpenStreetMap visualization defaults
+  enabled: true # Enable OSM map integration
+  node_spread_m: 500 # Simulated node spread in meters
+  zoom_level: 15 # Default OSM map zoom level
+  fallback_lat: 28.6139 # Fallback latitude when live data is unavailable
+  fallback_lon: 77.2090 # Fallback longitude when live data is unavailable
