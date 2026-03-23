@@ -1,0 +1,8 @@
+# Virtual environments
+oqs-env/
+venv/
+.env/
+
+# Python
+__pycache__/
+*.pyc
