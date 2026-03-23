@@ -27,15 +27,17 @@ class CryptoModule:
     """Provides validation and setup for Dilithium operations."""
 
     def __init__(self, algorithm: str = DEFAULT_ALGORITHM) -> None:
-        if not OQS_AVAILABLE:
-            raise CryptoError("liboqs/oqs-python is not available in this environment")
+        self.algorithm = algorithm
 
-        if algorithm not in VALID_ALGORITHMS:
+        if OQS_AVAILABLE is False:
             raise CryptoError(
-                f"Invalid algorithm '{algorithm}'. Valid options: {VALID_ALGORITHMS}"
+                "liboqs/oqs-python is not available. Install with: pip install oqs-python"
             )
 
-        self.algorithm = algorithm
+        if self.algorithm not in VALID_ALGORITHMS:
+            raise CryptoError(
+                f"Invalid algorithm '{self.algorithm}'. Valid options: {VALID_ALGORITHMS}"
+            )
 
     def generate_keypair(self) -> tuple[bytes, bytes]:
         """Generate a Dilithium keypair; for Dilithium3, public key is 1952 bytes and private key is 4000 bytes."""
