@@ -50,3 +50,41 @@ class NodeState(enum.Enum):
     ISOLATED = enum.auto()
     QUARANTINED = enum.auto()
     DESTROYED = enum.auto()
+
+
+class Node:
+    """Represents a node in the DQRMAN distributed mesh network.
+    
+    Manages node identity, cryptographic keys, state, and trust relationships with
+    peer nodes in the network.
+    
+    Attributes:
+        node_id: Unique identifier derived from public key
+        public_key: ML-DSA-65 public key for cryptographic verification
+        state: Current lifecycle state in the mesh
+        trust_table: Dictionary mapping peer node_ids to their public keys
+    """
+    
+    def __init__(self, config=None):
+        """Initialize a new network node.
+        
+        Args:
+            config: Optional configuration dictionary containing 'dilithium_variant'.
+                   Defaults to 'ML-DSA-65' if not provided.
+                   
+        Raises:
+            CryptoError: If cryptographic module initialization fails.
+        """
+        from backend.crypto import CryptoModule
+        
+        if config is None:
+            config = {}
+        
+        algorithm = config.get('dilithium_variant', 'ML-DSA-65')
+        crypto = CryptoModule(algorithm=algorithm)
+        
+        self.public_key, self._private_key = crypto.generate_keypair()
+        self.node_id = crypto.derive_node_id(self.public_key)
+        self.state = NodeState.INITIALIZING
+        self.trust_table = {}
+        self._lock = threading.Lock()

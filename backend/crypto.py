@@ -18,7 +18,7 @@ except ImportError:
 DEFAULT_ALGORITHM = "ML-DSA-65"
 VALID_ALGORITHMS = ["Dilithium2", "ML-DSA-65", "Dilithium5"]
 
-# To replace Dilithium3 with another NIST post-quantum algorithm:
+# To replace ML-DSA-65 with another NIST post-quantum algorithm:
 # 1) Change DEFAULT_ALGORITHM to the new mechanism name.
 # 2) Update VALID_ALGORITHMS.
 # 3) Update key-size numbers in method docstrings.
