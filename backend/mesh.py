@@ -326,3 +326,61 @@ class TrustGraph:
                 node_lon = center_lon + lon_offset
                 self._graph.nodes[node_id]['lat'] = node_lat
                 self._graph.nodes[node_id]['lon'] = node_lon
+
+    def compute_trust_path(self, source, target):
+        """Compute shortest trust path from source to target node.
+
+        Finds the path between two nodes that maximizes trust by using Dijkstra's
+        algorithm with inverted edge weights. Higher-trust edges (higher weight)
+        become lower-cost and are preferred in the path.
+
+        The method caches results for efficiency, invalidating the cache when
+        the network topology changes (_paths_dirty flag).
+
+        Args:
+            source: Source node identifier.
+            target: Target node identifier.
+
+        Returns:
+            list: Ordered list of node IDs from source to target (inclusive).
+                  Returns empty list if path does not exist or nodes are invalid.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            # Check cache validity
+            cache_key = (source, target)
+            if cache_key in self._path_cache:
+                cached_path, cached_time = self._path_cache[cache_key]
+                age = time.time() - cached_time
+                if not self._paths_dirty and age < 0.5:
+                    return cached_path
+
+            # Validate nodes exist
+            if source not in self._graph or target not in self._graph:
+                return []
+
+            try:
+                # Weight function: invert edge weights so high-trust edges (high weight)
+                # become low-cost and are preferred by Dijkstra's algorithm.
+                # A weight of 0.9 becomes cost 0.1 (preferred), while 0.1 becomes cost 0.9.
+                def weight_fn(u, v, d):
+                    edge_weight = d.get('weight', 0.5)
+                    return 1.0 - edge_weight
+
+                start_time = time.time()
+                path = nx.dijkstra_path(self._graph, source, target, weight=weight_fn)
+                elapsed_ms = (time.time() - start_time) * 1000
+
+                if elapsed_ms > 100:
+                    logger.warning(
+                        f'compute_trust_path {source[:8]} to {target[:8]} took {elapsed_ms:.1f}ms'
+                    )
+
+                # Cache the result with timestamp
+                self._path_cache[cache_key] = (path, time.time())
+                return path
+
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                return []
