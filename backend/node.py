@@ -232,8 +232,18 @@ class Node:
         
         Args:
             new_state: Target NodeState value.
+            
+        Raises:
+            ValueError: If current state is DESTROYED (terminal state).
         """
         with self._lock:
+            if self.state == NodeState.DESTROYED:
+                raise ValueError('DESTROYED is a terminal state with no exit')
+            
+            old_state = self.state
+            logger.info(
+                f'Node {self.node_id[:8]} transitioning from {old_state.name} to {new_state.name}'
+            )
             self.state = new_state
     
     def broadcast_join(self, neighbours):
