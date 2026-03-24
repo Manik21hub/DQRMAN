@@ -485,3 +485,111 @@ class TrustGraph:
 
         except Exception:
             return (False, {})
+
+    def is_operational(self):
+        """Check if the mesh is operational based on node availability.
+
+        Determines operational status by comparing active nodes to the
+        original node count at network bootstrap. Requires at least 20%
+        of original nodes to remain active for continued operation.
+
+        Args:
+            None.
+
+        Returns:
+            bool: True if active nodes / original_node_count >= 0.20,
+                  or if original_node_count is 0. False if below threshold
+                  with critical log message.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            # Handle bootstrap case
+            if self._original_node_count == 0:
+                return True
+
+            active_nodes = self.get_active_nodes()
+            active_count = len(active_nodes)
+            availability = active_count / self._original_node_count
+
+            if availability < 0.20:
+                logger.critical(
+                    f'Mesh degraded: {active_count}/{self._original_node_count} '
+                    f'nodes active ({availability*100:.1f}%)'
+                )
+                return False
+
+            return True
+
+    def on_node_failure(self, node_id):
+        """Handle a node failure: mark destroyed, clean cache, trigger reroute.
+
+        Processes node failure by setting node status to DESTROYED, removing
+        related entries from the path cache, and triggering path recalculation
+        with debounce to handle cascade failures gracefully.
+
+        Args:
+            node_id: Node identifier that has failed.
+
+        Returns:
+            dict: Event dictionary with failure details.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            # Set node status to destroyed
+            if node_id in self._graph:
+                self._graph.nodes[node_id]['status'] = 'DESTROYED'
+
+            # Remove path cache entries containing this node
+            keys_to_remove = [
+                key for key in self._path_cache
+                if node_id in key  # key is (source, target) tuple
+            ]
+            for key in keys_to_remove:
+                del self._path_cache[key]
+
+            # Cancel existing reroute timer (debounce)
+            if self._reroute_timer:
+                self._reroute_timer.cancel()
+
+            # Create debounce timer: 100ms delay before reroute
+            self._reroute_timer = threading.Timer(
+                0.1,
+                self._reroute_paths,
+                args=(node_id,)
+            )
+            self._reroute_timer.start()
+
+            # Build event dictionary
+            event = {
+                'event_type': 'NODE_FAILURE',
+                'node_id': node_id,
+                'timestamp': time.time(),
+                'active_count': len(self.get_active_nodes()),
+            }
+
+            return event
+
+    def _reroute_paths(self, failed_node_id):
+        """Recalculate paths after node failure.
+
+        Helper method triggered by debounced timer after node failure.
+        Marks path cache dirty to force recalculation on next path query.
+
+        Args:
+            failed_node_id: Node ID that triggered reroute.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            self._paths_dirty = True
+            logger.warning(
+                f'Rerouting paths after failure of {failed_node_id[:8]}'
+            )
