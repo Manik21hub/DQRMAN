@@ -577,7 +577,9 @@ class TrustGraph:
         """Recalculate paths after node failure.
 
         Helper method triggered by debounced timer after node failure.
-        Marks path cache dirty to force recalculation on next path query.
+        Evaluates network health, cleans cache, and marks for reroute.
+        Returns early if fewer than 2 nodes survive to prevent
+        rerouting in a severed network partition.
 
         Args:
             failed_node_id: Node ID that triggered reroute.
@@ -588,8 +590,43 @@ class TrustGraph:
         Raises:
             None.
         """
+        start_time = time.time()
+
         with self._lock:
+            # Get list of surviving active nodes
+            survivors = self.get_active_nodes()
+            survivor_count = len(survivors)
+
+            # Return early if mesh is too small to reroute
+            if survivor_count < 2:
+                logger.warning(
+                    f'Reroute cancelled: {survivor_count} survivors remaining '
+                    f'(minimum 2 required)'
+                )
+                return
+
+            # Remove path cache entries containing failed node
+            keys_to_remove = [
+                key for key in self._path_cache
+                if failed_node_id in key  # key is (source, target) tuple
+            ]
+            for key in keys_to_remove:
+                del self._path_cache[key]
+
+            # Mark paths dirty for recalculation
             self._paths_dirty = True
-            logger.warning(
-                f'Rerouting paths after failure of {failed_node_id[:8]}'
+
+            # Measure elapsed time
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            # Log warning if operation took too long
+            if elapsed_ms > 2000:
+                logger.warning(
+                    f'Reroute took {elapsed_ms:.1f}ms (threshold 2000ms)'
+                )
+
+            # Log reroute completion
+            logger.info(
+                f'Rerouted paths after failure of {failed_node_id[:8]}: '
+                f'{survivor_count} survivors remain, reroute took {elapsed_ms:.1f}ms'
             )
