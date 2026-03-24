@@ -215,3 +215,114 @@ class TrustGraph:
 
             # Mark path cache dirty
             self._paths_dirty = True
+
+    def set_node_coords(self, node_id, lat, lon):
+        """Set geographic coordinates for a node.
+
+        Updates the latitude and longitude attributes for a node in the graph.
+        These coordinates are used for proximity calculations and geographic routing.
+
+        Args:
+            node_id: Node identifier in the graph.
+            lat: Latitude in degrees (float).
+            lon: Longitude in degrees (float).
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            if node_id in self._graph:
+                self._graph.nodes[node_id]['lat'] = float(lat)
+                self._graph.nodes[node_id]['lon'] = float(lon)
+
+    def compute_proximity_score(self, node_id_1, node_id_2):
+        """Compute proximity score between two nodes using Haversine distance.
+
+        Calculates great-circle distance between two nodes on Earth using the
+        Haversine formula, then converts to a normalized proximity score where
+        co-located nodes score 1.0, nodes 500m apart score 0.5, and farther
+        nodes score proportionally lower.
+
+        Args:
+            node_id_1: First node identifier.
+            node_id_2: Second node identifier.
+
+        Returns:
+            float: Proximity score in range [0.0, 1.0].
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            node_1_data = self._graph.nodes.get(node_id_1, {})
+            node_2_data = self._graph.nodes.get(node_id_2, {})
+
+            lat1 = node_1_data.get('lat', 0.0)
+            lon1 = node_1_data.get('lon', 0.0)
+            lat2 = node_2_data.get('lat', 0.0)
+            lon2 = node_2_data.get('lon', 0.0)
+
+            # Convert to radians
+            lat1_rad = math.radians(lat1)
+            lat2_rad = math.radians(lat2)
+            delta_lat = math.radians(lat2 - lat1)
+            delta_lon = math.radians(lon2 - lon1)
+
+            # Haversine formula
+            a = (math.sin(delta_lat / 2) ** 2 +
+                 math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2)
+            c = 2 * math.asin(math.sqrt(a))
+            earth_radius_m = 6371000  # meters
+            distance_m = earth_radius_m * c
+
+            # Proximity score: 1.0 at 0m, 0.5 at 500m, decreasing thereafter
+            proximity = 1.0 / (1.0 + distance_m / 500.0)
+            return proximity
+
+    def scatter_nodes_geographically(self, center_lat, center_lon, spread_m=500):
+        """Assign random geographic coordinates to all active nodes.
+
+        Distributes nodes around a geographic center point within a specified
+        radius, using random bearing and distance for each node. Useful for
+        testing mesh topology with geographic distribution.
+
+        Args:
+            center_lat: Center latitude in degrees (float).
+            center_lon: Center longitude in degrees (float).
+            spread_m: Maximum distance from center in meters (float), default 500.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            active_nodes = [
+                node_id for node_id in self._graph.nodes()
+                if self._graph.nodes[node_id].get('status') == 'ACTIVE'
+            ]
+
+            for node_id in active_nodes:
+                # Random bearing [0, 2π]
+                bearing = random.uniform(0, 2 * math.pi)
+                # Random distance [50, spread_m] meters
+                distance_m = random.uniform(50, spread_m)
+
+                # Convert bearing and distance to lat/lon offsets
+                # For small distances, approximate using degrees per meter
+                # 1 degree of latitude ≈ 111,000 meters
+                lat_offset = (distance_m * math.cos(bearing)) / 111000.0
+
+                # Longitude offset depends on latitude
+                center_lat_rad = math.radians(center_lat)
+                lon_offset = (distance_m * math.sin(bearing)) / (111000.0 * math.cos(center_lat_rad))
+
+                # Set node coordinates
+                node_lat = center_lat + lat_offset
+                node_lon = center_lon + lon_offset
+                self._graph.nodes[node_id]['lat'] = node_lat
+                self._graph.nodes[node_id]['lon'] = node_lon
