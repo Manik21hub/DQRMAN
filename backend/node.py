@@ -43,6 +43,20 @@ def _build_auth_message(nonce, timestamp, extra=b''):
     return nonce + struct.pack('d', timestamp) + extra
 
 
+def log_auth_event(result):
+    """Log a mutual authentication event in structured JSON format."""
+    log_entry = {
+        'event_type': 'MUTUAL_AUTH',
+        'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+        'node_a_id': result.get('node_a_id'),
+        'node_b_id': result.get('node_b_id'),
+        'outcome': 'SUCCESS' if result.get('success') is True else 'FAILURE',
+        'failure_reason': result.get('failure_reason') or None,
+        'duration_ms': round(float(result.get('duration_ms', 0.0)), 2),
+    }
+    logger.info(json.dumps(log_entry))
+
+
 @dataclasses.dataclass
 class NodeIdentity:
     """Represents the cryptographic identity of a network node.
@@ -150,7 +164,7 @@ class AuthProtocol:
         success, failure_reason = node_b.verify_challenge(ch)
         if not success:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 'success': False,
                 'failure_reason': failure_reason,
                 'duration_ms': elapsed_ms,
@@ -158,6 +172,8 @@ class AuthProtocol:
                 'node_a_id': node_a.node_id,
                 'node_b_id': node_b.node_id
             }
+            log_auth_event(result)
+            return result
         
         # Steps 7-9: Generate response
         nonce_b = node_b.crypto.generate_nonce()
@@ -172,7 +188,7 @@ class AuthProtocol:
         time_sync_window = node_a._config.get('time_sync_window', 5.0)
         if abs(time.time() - ts_b) > time_sync_window:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 'success': False,
                 'failure_reason': 'RESPONSE_TIMESTAMP_EXPIRED',
                 'duration_ms': elapsed_ms,
@@ -180,12 +196,14 @@ class AuthProtocol:
                 'node_a_id': node_a.node_id,
                 'node_b_id': node_b.node_id
             }
+            log_auth_event(result)
+            return result
         
         # Rebuild and verify response message
         verify_message = _build_auth_message(nonce_b, ts_b, nonce_a_bytes)
         if not node_a.crypto.verify(node_b.public_key, verify_message, response_signature):
             elapsed_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 'success': False,
                 'failure_reason': 'INVALID_RESPONSE_SIGNATURE',
                 'duration_ms': elapsed_ms,
@@ -193,10 +211,12 @@ class AuthProtocol:
                 'node_a_id': node_a.node_id,
                 'node_b_id': node_b.node_id
             }
+            log_auth_event(result)
+            return result
         
         # Step 12: Return success result
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        return {
+        result = {
             'success': True,
             'failure_reason': None,
             'duration_ms': elapsed_ms,
@@ -204,6 +224,8 @@ class AuthProtocol:
             'node_a_id': node_a.node_id,
             'node_b_id': node_b.node_id
         }
+        log_auth_event(result)
+        return result
 
 
 class Node:
