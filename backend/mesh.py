@@ -429,7 +429,7 @@ class TrustGraph:
         # Return as JSON bytes
         return json.dumps(packet).encode('utf-8')
 
-    def verify_propagation(self, packet_bytes, expected_sender_id):
+    def verify_propagation(self, packet_bytes, expected_sender):
         """Verify a mesh state propagation packet.
 
         Validates the sender, checks that the sender's public key is registered
@@ -438,7 +438,7 @@ class TrustGraph:
 
         Args:
             packet_bytes: JSON-encoded packet bytes from propagate_mesh_state.
-            expected_sender_id: Expected sender node ID for validation.
+            expected_sender: Expected sender node ID for validation.
 
         Returns:
             tuple: (success: bool, delta_dict: dict). Success is True only if
@@ -457,7 +457,7 @@ class TrustGraph:
             data_hex = packet.get('data')
 
             # Validate sender matches expected
-            if sender_id != expected_sender_id:
+            if sender_id != expected_sender:
                 return (False, {})
 
             # Check sender is in trust table
@@ -476,7 +476,7 @@ class TrustGraph:
             # Verify signature using CryptoModule
             from backend.crypto import CryptoModule
             crypto = CryptoModule()
-            if not crypto.verify(json_bytes, signature, sender_pubkey):
+            if not crypto.verify(sender_pubkey, json_bytes, signature):
                 return (False, {})
 
             # Parse and return delta
@@ -551,8 +551,8 @@ class TrustGraph:
             for key in keys_to_remove:
                 del self._path_cache[key]
 
-            # Cancel existing reroute timer (debounce)
-            if self._reroute_timer:
+            # Cancel existing reroute timer only if it is still running.
+            if self._reroute_timer and self._reroute_timer.is_alive():
                 self._reroute_timer.cancel()
 
             # Create debounce timer: 100ms delay before reroute
