@@ -363,13 +363,15 @@ class Node:
         """Initialize node cryptographic identity and state for FR-01 bootstrap.
         
         Args:
-            config: Optional configuration dictionary containing 'dilithium_variant'.
+            config: Optional configuration dictionary containing 'dilithium_variant'
+                   and 'port' (default 9000).
                    Defaults to 'ML-DSA-65' if not provided.
                    
         Raises:
             CryptoError: If cryptographic module initialization fails.
         """
         from backend.crypto import CryptoModule
+        from backend.protocol import NodeTCPServer
         
         if config is None:
             config = {}
@@ -386,6 +388,16 @@ class Node:
         self._config = config
         self.crypto = crypto
         self.nonce_cache = NonceCache()
+        
+        # Initialize TCP server
+        self.port = config.get('port', 9000)
+        self.tcp_server = NodeTCPServer(self, '0.0.0.0', self.port)
+        
+        # Start TCP server in daemon thread
+        server_thread = threading.Thread(target=self.tcp_server.serve_forever, daemon=True)
+        server_thread.start()
+        
+        logger.info('TCP server started on port %d', self.port)
     
     def transition_to(self, new_state):
         """Transition the node to a new lifecycle state.
@@ -625,6 +637,40 @@ class Node:
         self.transition_to(NodeState.DESTROYED)
 
         logger.info('Node %s shut down cleanly', self.node_id[:8])
+
+    def send_to_peer(self, host, port, message_type, payload):
+        """Send a signed message to a peer node via TCP.
+
+        Constructs a wire-protocol frame containing the message type, node ID,
+        payload, and cryptographic signature, then sends it to the specified
+        host and port using TCP.
+
+        Args:
+            host: Target peer hostname or IP address.
+            port: Target peer TCP port.
+            message_type: Integer message type code (0x01-0x06).
+            payload: Bytes to include in the message payload.
+
+        Returns:
+            None.
+
+        Raises:
+            None (exceptions are logged).
+        """
+        from backend.protocol import pack_frame, NodeTCPClient
+
+        try:
+            # Sign the payload with this node's private key
+            signature = self.crypto.sign(self._private_key, payload)
+
+            # Pack the frame with message type, sender node_id, payload, and signature
+            frame = pack_frame(message_type, self.node_id, payload, signature)
+
+            # Send frame via TCP client
+            client = NodeTCPClient(host, port)
+            client.send_frame(frame)
+        except Exception as e:
+            logger.warning(f'Failed to send message to {host}:{port}: {e}')
 
 
 def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
