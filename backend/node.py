@@ -126,6 +126,52 @@ class NonceCache:
         self._nonces[nonce.hex()] = time.time() + ttl
 
 
+class AnomalyLogger:
+    """Tracks recent authentication failures and quarantines anomalous nodes."""
+
+    def __init__(self, node, threshold=5, window_seconds=30):
+        """Initialize anomaly tracker for a node.
+
+        Args:
+            node: Node instance being monitored.
+            threshold: Number of recent failures required to trigger anomaly.
+            window_seconds: Sliding time window used for anomaly detection.
+        """
+        self.node = node
+        self.threshold = threshold
+        self.window_seconds = window_seconds
+        self.failures = []
+
+    def record_failure(self, reason):
+        """Record a failure reason and quarantine the node on anomaly."""
+        self.failures.append((time.time(), reason))
+        if self.check_anomaly() and self.node.state not in (
+            NodeState.QUARANTINED,
+            NodeState.DESTROYED,
+        ):
+            self.node.transition_to(NodeState.QUARANTINED)
+
+    def check_anomaly(self):
+        """Return True when recent failure count meets or exceeds threshold."""
+        now = time.time()
+        cutoff = now - self.window_seconds
+        self.failures = [(ts, r) for ts, r in self.failures if ts >= cutoff]
+        return len(self.failures) >= self.threshold
+
+    def get_log_entry(self):
+        """Build anomaly alert payload for structured logging."""
+        now = time.time()
+        cutoff = now - self.window_seconds
+        recent = [(ts, r) for ts, r in self.failures if ts >= cutoff]
+        return {
+            'event_type': 'ANOMALY_ALERT',
+            'node_id': self.node.node_id,
+            'failure_count': len(recent),
+            'failure_reasons': [reason for _, reason in recent],
+            'timestamps': [ts for ts, _ in recent],
+        }
+
+
 class AuthProtocol:
     """Authentication protocol for peer-to-peer node verification.
     
