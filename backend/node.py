@@ -108,7 +108,23 @@ class NonceCache:
         Raises:
             None.
         """
-        self._nonces = {}
+        self._cache = {}
+
+    def clear_expired(self):
+        """Remove expired nonce entries from the cache.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        now = time.time()
+        # Keep only entries that expire in the future.
+        self._cache = {k: v for k, v in self._cache.items() if v > now}
     
     def contains(self, nonce):
         """Check whether a nonce exists and is not expired.
@@ -124,10 +140,8 @@ class NonceCache:
         Raises:
             None.
         """
-        now = time.time()
-        # Evict expired entries
-        self._nonces = {k: v for k, v in self._nonces.items() if v > now}
-        return nonce.hex() in self._nonces
+        self.clear_expired()
+        return nonce.hex() in self._cache
     
     def add(self, nonce, ttl):
         """Add a nonce with a time-to-live value.
@@ -142,7 +156,7 @@ class NonceCache:
         Raises:
             None.
         """
-        self._nonces[nonce.hex()] = time.time() + ttl
+        self._cache[nonce.hex()] = time.time() + ttl
 
 
 class AnomalyLogger:

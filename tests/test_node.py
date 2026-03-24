@@ -296,3 +296,31 @@ def test_auth_latency_1000():
     
     # Assert durations[949] is under threshold
     assert durations[949] < threshold_s, f'latency at index 949 {durations[949]*1000:.2f}ms exceeds threshold {threshold_ms}ms'
+
+
+def test_join_tampered_signature():
+    """Test join verification failure when signature tail is tampered."""
+    node_a = Node()
+    node_b = Node()
+
+    packet = node_a.broadcast_join([])
+    packet['signature'] = packet['signature'][:-8] + 'ffffffff'
+
+    result = node_b.verify_join(packet)
+    assert result == (False, 'INVALID_JOIN_SIGNATURE')
+
+
+@pytest.mark.skip(reason='Placeholder: activates in Day 3 after TrustGraph is built')
+def test_duplicate_node_id_rejected():
+    """Placeholder test for rejecting duplicate node IDs in TrustGraph."""
+    # Placeholder: this will activate in Day 3 after TrustGraph is built.
+    from backend.trust_graph import TrustGraph
+
+    graph = TrustGraph()
+    node_id = 'a' * 64
+    public_key_1 = b'\x01' * 1952
+    public_key_2 = b'\x02' * 1952
+
+    graph.add_node(node_id, public_key_1)
+    with pytest.raises(ValueError):
+        graph.add_node(node_id, public_key_2)
