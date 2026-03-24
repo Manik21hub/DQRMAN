@@ -230,3 +230,25 @@ def test_authenticate_response_includes_nonce_a(node_a, node_b):
     
     # Should match the nonce_a that was created in the challenge
     assert nonce_a_from_message == captured_nonce_a[0]
+
+
+def test_in_window_replay(node_a, node_b):
+    """Test that nonce is cached even when timestamp is still fresh.
+    
+    Validates that nonce cache is the mechanism preventing replay, not
+    timestamp expiration. Proves that the same nonce is rejected immediately
+    on reuse even though the timestamp is within the sync window.
+    """
+    # Create challenge once
+    ch = node_a.create_challenge()
+    
+    # First verification should succeed
+    success1, reason1 = node_b.verify_challenge(ch)
+    assert success1 is True
+    assert reason1 is None
+    
+    # Immediately verify with same challenge again
+    # Should fail with DUPLICATE_NONCE, NOT TIMESTAMP_EXPIRED
+    success2, reason2 = node_b.verify_challenge(ch)
+    assert success2 is False
+    assert reason2 == 'DUPLICATE_NONCE'  # This proves nonce cache is working
