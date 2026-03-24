@@ -596,6 +596,36 @@ class Node:
         logger.info('Node %s rejoined after a crash', self.node_id[:8])
         return True
 
+    def shutdown(self):
+        """Gracefully shut down the node and its resources.
+
+        Signals the heartbeat sender thread to stop, waits for it to join
+        with a 2-second timeout, closes the TCP server if active, and
+        transitions the node to DESTROYED state.
+
+        This method is idempotent and safe to call even if some resources
+        were never initialized.
+
+        Returns:
+            None.
+        """
+        # Signal heartbeat sender thread to stop
+        if hasattr(self, '_heartbeat_stop'):
+            self._heartbeat_stop.set()
+
+        # Wait for heartbeat thread to terminate
+        if hasattr(self, '_hb_thread'):
+            self._hb_thread.join(timeout=2.0)
+
+        # Close TCP server if it exists
+        if hasattr(self, 'tcp_server'):
+            self.tcp_server.server_close()
+
+        # Transition to terminal state
+        self.transition_to(NodeState.DESTROYED)
+
+        logger.info('Node %s shut down cleanly', self.node_id[:8])
+
 
 def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
     """Send periodic heartbeat messages to mesh neighbours.
