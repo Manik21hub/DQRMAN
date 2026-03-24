@@ -5,6 +5,7 @@ Tests the Node class, AuthProtocol, and NonceCache implementations.
 
 import pytest
 import time
+import os
 import struct
 from backend.node import Node, AuthProtocol, NonceCache, NodeState
 
@@ -252,3 +253,46 @@ def test_in_window_replay(node_a, node_b):
     success2, reason2 = node_b.verify_challenge(ch)
     assert success2 is False
     assert reason2 == 'DUPLICATE_NONCE'  # This proves nonce cache is working
+
+
+def test_auth_latency_1000():
+    """Test AuthProtocol performance over 1000 iterations.
+    
+    Measures authentication latency across 1000 rounds with fresh nodes
+    each iteration. Validates p99 is under environment threshold.
+    Prints percentile statistics (p50, p95, p99).
+    """
+    # Read threshold from environment
+    threshold_ms = float(os.getenv('AUTH_LATENCY_MS', '200'))
+    threshold_s = threshold_ms / 1000.0
+    
+    durations = []
+    
+    # Run 1000 authentication cycles
+    for _ in range(1000):
+        node_a = Node()
+        node_b = Node()
+        
+        start = time.perf_counter()
+        result = AuthProtocol().authenticate(node_a, node_b)
+        duration = time.perf_counter() - start
+        
+        durations.append(duration)
+    
+    # Sort for percentile calculation
+    durations.sort()
+    
+    # Calculate percentiles
+    p50 = durations[499]   # 50th percentile (index 499 out of 1000)
+    p95 = durations[949]   # 95th percentile (index 949 out of 1000)
+    p99 = durations[989]   # 99th percentile (index 989 out of 1000)
+    
+    # Print statistics
+    print(f'\nAuth latency (1000 iterations):')
+    print(f'  p50: {p50*1000:.2f} ms')
+    print(f'  p95: {p95*1000:.2f} ms')
+    print(f'  p99: {p99*1000:.2f} ms')
+    print(f'  threshold: {threshold_ms:.1f} ms')
+    
+    # Assert durations[949] is under threshold
+    assert durations[949] < threshold_s, f'latency at index 949 {durations[949]*1000:.2f}ms exceeds threshold {threshold_ms}ms'
