@@ -99,3 +99,20 @@ def test_sign_verify_latency() -> None:
 
     print(f"p50={p50 * 1000:.3f}ms p95={p95 * 1000:.3f}ms p99={p99 * 1000:.3f}ms")
     assert durations[949] < (threshold_ms / 1000.0)
+
+
+if __name__ == "__main__":
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            __file__,
+            "--cov=backend.crypto",
+            "--cov-fail-under=80",
+        ]
+    )
+    sys.exit(result.returncode)
