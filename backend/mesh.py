@@ -384,3 +384,104 @@ class TrustGraph:
 
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 return []
+
+    def propagate_mesh_state(self, signing_node, changed_nodes, changed_edges):
+        """Propagate mesh state changes to other nodes.
+
+        Creates a signed state delta packet containing changes to node list and
+        edge list. The packet is signed using the signing node's private key
+        and includes the sender's identity and public key for verification.
+
+        Args:
+            signing_node: Node object with crypto capability and private key.
+            changed_nodes: List of node IDs that changed (added/removed/modified).
+            changed_edges: List of edge tuples (from_id, to_id) that changed.
+
+        Returns:
+            bytes: JSON-encoded packet with signature and metadata.
+
+        Raises:
+            None.
+        """
+        # Build delta dictionary
+        delta = {
+            'event_type': 'MESH_STATE_DELTA',
+            'changed_nodes': changed_nodes,
+            'changed_edges': changed_edges,
+            'timestamp': time.time(),
+            'node_count': len(self._graph),
+        }
+
+        # Convert to JSON bytes
+        json_bytes = json.dumps(delta).encode('utf-8')
+
+        # Sign using signing node's crypto module and private key
+        signature = signing_node.crypto.sign(json_bytes, signing_node.private_key)
+
+        # Build packet
+        packet = {
+            'data': json_bytes.hex(),
+            'sender_id': signing_node.node_id,
+            'sender_pubkey': signing_node.public_key.hex(),
+            'signature': signature.hex(),
+        }
+
+        # Return as JSON bytes
+        return json.dumps(packet).encode('utf-8')
+
+    def verify_propagation(self, packet_bytes, expected_sender_id):
+        """Verify a mesh state propagation packet.
+
+        Validates the sender, checks that the sender's public key is registered
+        in the trust table, and verifies the Dilithium signature on the contained
+        state delta.
+
+        Args:
+            packet_bytes: JSON-encoded packet bytes from propagate_mesh_state.
+            expected_sender_id: Expected sender node ID for validation.
+
+        Returns:
+            tuple: (success: bool, delta_dict: dict). Success is True only if
+                   sender exists, is trusted, and signature verifies. delta_dict
+                   is the parsed state delta on success, empty dict on failure.
+
+        Raises:
+            None.
+        """
+        try:
+            # Parse packet
+            packet = json.loads(packet_bytes.decode('utf-8'))
+            sender_id = packet.get('sender_id')
+            sender_pubkey_hex = packet.get('sender_pubkey')
+            signature_hex = packet.get('signature')
+            data_hex = packet.get('data')
+
+            # Validate sender matches expected
+            if sender_id != expected_sender_id:
+                return (False, {})
+
+            # Check sender is in trust table
+            if sender_id not in self._trust_table:
+                return (False, {})
+
+            # Reconstruct data and signature bytes
+            json_bytes = bytes.fromhex(data_hex)
+            signature = bytes.fromhex(signature_hex)
+            sender_pubkey = bytes.fromhex(sender_pubkey_hex)
+
+            # Verify public key matches trust table
+            if sender_pubkey != self._trust_table[sender_id]:
+                return (False, {})
+
+            # Verify signature using CryptoModule
+            from backend.crypto import CryptoModule
+            crypto = CryptoModule()
+            if not crypto.verify(json_bytes, signature, sender_pubkey):
+                return (False, {})
+
+            # Parse and return delta
+            delta = json.loads(json_bytes.decode('utf-8'))
+            return (True, delta)
+
+        except Exception:
+            return (False, {})
