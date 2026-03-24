@@ -657,3 +657,146 @@ def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
     finally:
         sock.close()
         logger.info(f'Heartbeat sender for {node.node_id[:8]} stopped')
+
+
+class HeartbeatReceiver:
+    """Receive and verify signed heartbeat messages from mesh neighbours.
+
+    Monitors UDP heartbeat packets sent by peer nodes, validates signatures,
+    and tracks last-seen times for liveness detection. Supports jamming
+    simulation for testing network robustness.
+    """
+
+    def __init__(self, monitoring_node, host='127.0.0.1', port=10001):
+        """Initialize heartbeat receiver.
+
+        Args:
+            monitoring_node: Node instance with trust_table and crypto capability.
+            host: Host address to bind UDP socket (default '127.0.0.1').
+            port: Port number to bind UDP socket (default 10001).
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.node = monitoring_node
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.last_seen = {}
+        self.jamming_active = False
+
+    def listen(self, stop_event):
+        """Listen for heartbeat packets and verify signatures.
+
+        Receives UDP packets containing signed heartbeats from peer nodes.
+        Validates each heartbeat's signature against the peer's public key
+        from the trust table. Updates last_seen timestamp for valid packets.
+
+        Can be run in a separate thread. Graceful shutdown via stop_event.
+
+        Args:
+            stop_event: threading.Event for shutdown signaling.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        # Bind UDP socket
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.settimeout(1.0)
+
+        try:
+            self.socket.bind((self.host, self.port))
+            logger.info(f'Heartbeat receiver listening on {self.host}:{self.port}')
+        except OSError as e:
+            logger.error(f'Failed to bind heartbeat socket: {e}')
+            return
+
+        try:
+            while not stop_event.is_set():
+                try:
+                    # Receive packet
+                    data, addr = self.socket.recvfrom(4096)
+
+                    # Skip if jamming is active
+                    if self.jamming_active:
+                        continue
+
+                    try:
+                        # Parse JSON packet
+                        packet = json.loads(data.decode('utf-8'))
+                        sender_id = packet.get('node_id')
+                        timestamp = packet.get('timestamp')
+                        signature_hex = packet.get('signature')
+
+                        if not all([sender_id, timestamp is not None, signature_hex]):
+                            continue
+
+                        # Pack timestamp as bytes
+                        ts_bytes = struct.pack('d', timestamp)
+                        signature_bytes = bytes.fromhex(signature_hex)
+
+                        # Get sender's public key from trust table
+                        if sender_id not in self.node.trust_table:
+                            logger.debug(f'Heartbeat from unknown node {sender_id[:8]}')
+                            continue
+
+                        public_key = self.node.trust_table[sender_id]
+
+                        # Verify signature
+                        if not self.node.crypto.verify(public_key, ts_bytes, signature_bytes):
+                            logger.warning(f'Heartbeat signature invalid from {sender_id[:8]}')
+                            continue
+
+                        # Update last_seen
+                        self.last_seen[sender_id] = time.time()
+                        logger.debug(f'Heartbeat from {sender_id[:8]} verified')
+
+                    except Exception as e:
+                        logger.debug(f'Heartbeat parse error from {addr}: {e}')
+                        continue
+
+                except socket.timeout:
+                    pass
+                except Exception as e:
+                    if not stop_event.is_set():
+                        logger.error(f'Heartbeat receive error: {e}')
+
+        finally:
+            if self.socket:
+                self.socket.close()
+            logger.info(f'Heartbeat receiver stopped')
+
+    def check_neighbours(self, interval, timeout=1.0):
+        """Check for neighbours with stale heartbeats.
+
+        Identifies peer nodes that have not sent heartbeats within the
+        specified time window. Useful for detecting network failures or
+        partitions.
+
+        Args:
+            interval: Seconds to treat as heartbeat interval.
+            timeout: Multiplier for timeout (default 1.0). Total timeout
+                     is interval * timeout.
+
+        Returns:
+            list: Node IDs whose last_seen is older than interval * timeout.
+
+        Raises:
+            None.
+        """
+        now = time.time()
+        threshold = interval * timeout
+        stale = []
+
+        for node_id, last_time in self.last_seen.items():
+            if now - last_time > threshold:
+                stale.append(node_id)
+
+        return stale
