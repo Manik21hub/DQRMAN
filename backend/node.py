@@ -595,3 +595,65 @@ class Node:
 
         logger.info('Node %s rejoined after a crash', self.node_id[:8])
         return True
+
+
+def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
+    """Send periodic heartbeat messages to mesh neighbours.
+
+    Runs a background loop that sends signed heartbeat packets to all
+    neighbours at regular intervals. Each heartbeat includes a timestamp
+    and signature for peer verification. Designed to run in a separate
+    thread with graceful shutdown via stop_event.
+
+    Args:
+        node: Node instance with crypto capability and private key.
+        neighbours: List of (host, port) tuples for destination peers.
+        stop_event: threading.Event for clean shutdown signaling.
+        interval: Seconds between heartbeats (default 1.0).
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+    # Open UDP socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    try:
+        while not stop_event.is_set():
+            try:
+                # Get current timestamp
+                timestamp = time.time()
+                ts_bytes = struct.pack('d', timestamp)
+
+                # Sign timestamp with node's private key
+                signature = node.crypto.sign(ts_bytes, node.private_key)
+
+                # Build JSON packet
+                packet = {
+                    'node_id': node.node_id,
+                    'timestamp': timestamp,
+                    'signature': signature.hex(),
+                }
+                packet_bytes = json.dumps(packet).encode('utf-8')
+
+                # Send to each neighbour
+                for host, port in neighbours:
+                    try:
+                        sock.sendto(packet_bytes, (host, port))
+                    except Exception as e:
+                        logger.warning(
+                            f'Heartbeat send to {host}:{port} failed: {e}'
+                        )
+
+            except Exception as e:
+                logger.error(f'Heartbeat generation error: {e}')
+
+            # Wait for interval or stop_event
+            stop_event.wait(interval)
+
+    finally:
+        sock.close()
+        logger.info(f'Heartbeat sender for {node.node_id[:8]} stopped')
