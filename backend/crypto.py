@@ -18,6 +18,13 @@ except ImportError:
 DEFAULT_ALGORITHM = "ML-DSA-65"
 VALID_ALGORITHMS = ["Dilithium2", "ML-DSA-65", "Dilithium5"]
 
+# To replace Dilithium3 with another NIST post-quantum algorithm:
+# 1) Change DEFAULT_ALGORITHM to the new mechanism name.
+# 2) Update VALID_ALGORITHMS.
+# 3) Update key-size numbers in method docstrings.
+# 4) Run: python -c 'import oqs; print(oqs.get_enabled_sig_mechanisms())'
+# No other file needs to change.
+
 
 class CryptoError(Exception):
     """Raised when cryptography setup or usage is invalid."""
