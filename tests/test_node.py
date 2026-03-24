@@ -13,16 +13,20 @@ from backend.node import Node, AuthProtocol, NonceCache, NodeState
 @pytest.fixture
 def node_a():
     """Return a fresh Node instance for testing."""
-    return Node()
+    node = Node()
+    node.transition_to(NodeState.ACTIVE)
+    return node
 
 
 @pytest.fixture
 def node_b():
     """Return a fresh Node instance for testing."""
-    return Node()
+    node = Node()
+    node.transition_to(NodeState.ACTIVE)
+    return node
 
 
-def test_node_initialization(node_a):
+def test_node_initialization():
     """Test that new node has correct identity and initial state.
     
     Validates:
@@ -30,16 +34,18 @@ def test_node_initialization(node_a):
     - public_key is 1952 bytes (ML-DSA-65)
     - state is INITIALIZING
     """
+    fresh_node = Node()
+    
     # node_id should be 64-character hex string
-    assert len(node_a.node_id) == 64
-    assert all(c in '0123456789abcdef' for c in node_a.node_id)
+    assert len(fresh_node.node_id) == 64
+    assert all(c in '0123456789abcdef' for c in fresh_node.node_id)
     
     # public_key should be 1952 bytes (ML-DSA-65)
-    assert isinstance(node_a.public_key, bytes)
-    assert len(node_a.public_key) == 1952
+    assert isinstance(fresh_node.public_key, bytes)
+    assert len(fresh_node.public_key) == 1952
     
     # Should start in INITIALIZING state
-    assert node_a.state == NodeState.INITIALIZING
+    assert fresh_node.state == NodeState.INITIALIZING
 
 
 def test_authenticate_success(node_a, node_b):
@@ -50,6 +56,8 @@ def test_authenticate_success(node_a, node_b):
     - duration_ms is under 300 milliseconds
     - timestamp is ISO 8601 UTC with Z suffix
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     result = AuthProtocol().authenticate(node_a, node_b)
     
     assert result['success'] is True
@@ -66,6 +74,8 @@ def test_challenge_expired_timestamp(node_a, node_b):
     A challenge with timestamp 10 seconds in the past should return
     (False, 'TIMESTAMP_EXPIRED') from verify_challenge.
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     ch = node_a.create_challenge()
     # Modify timestamp to 10 seconds in the past
     ch['timestamp'] = time.time() - 10.0
@@ -82,6 +92,8 @@ def test_nonce_replay_detection(node_a, node_b):
     - First verification of challenge succeeds
     - Second verification with same challenge returns DUPLICATE_NONCE
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     ch = node_a.create_challenge()
     
     # First verification should succeed
@@ -101,6 +113,8 @@ def test_invalid_challenge_signature(node_a, node_b):
     Corrupts the last 4 characters of the signature hex string
     and verifies that verify_challenge returns INVALID_SIGNATURE.
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     ch = node_a.create_challenge()
     
     # Corrupt the last 4 characters of signature
@@ -197,6 +211,8 @@ def test_authenticate_response_includes_nonce_a(node_a, node_b):
     with the correct structure: nonce_b + timestamp + nonce_a, where
     nonce_a is the original nonce from node_a's challenge (steps 7-9).
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     # Capture the nonce created by node_a
     captured_nonce_a = []
     original_create_challenge = node_a.create_challenge
@@ -240,6 +256,8 @@ def test_in_window_replay(node_a, node_b):
     timestamp expiration. Proves that the same nonce is rejected immediately
     on reuse even though the timestamp is within the sync window.
     """
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
     # Create challenge once
     ch = node_a.create_challenge()
     

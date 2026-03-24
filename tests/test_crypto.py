@@ -13,7 +13,7 @@ def cm() -> CryptoModule:
 def test_generate_keypair_sizes(cm: CryptoModule) -> None:
     public_key, private_key = cm.generate_keypair()
     assert len(public_key) == 1952
-    assert len(private_key) == 4000
+    assert len(private_key) == 4032
 
 
 def test_sign_and_verify_true(cm: CryptoModule) -> None:
