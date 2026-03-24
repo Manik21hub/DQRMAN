@@ -92,6 +92,100 @@ class NonceCache:
         self._nonces[nonce.hex()] = time.time() + ttl
 
 
+class AuthProtocol:
+    """Authentication protocol for peer-to-peer node verification.
+    
+    Implements mutual authentication challenge-response mechanism with
+    nonce-based replay protection and timestamp validation.
+    """
+    
+    def authenticate(self, node_a, node_b):
+        """Authenticate node_b to node_a using challenge-response protocol.
+        
+        Steps 1-3: node_a creates and sends challenge.
+        Steps 4-6: node_b verifies challenge and accepts/rejects.
+        Steps 7-9: node_b generates response containing nonce commitment.
+        Steps 10-11: node_a verifies response signature and freshness.
+        Step 12: Return authentication result with timing and node IDs.
+        
+        Args:
+            node_a: First node (challenge creator).
+            node_b: Second node (challenge responder).
+            
+        Returns:
+            Dictionary with keys:
+                - success (bool): Whether authentication succeeded
+                - failure_reason (str or None): Reason if failed
+                - duration_ms (float): Elapsed time in milliseconds
+                - timestamp (str): ISO 8601 UTC timestamp with Z
+                - node_a_id (str): node_a.node_id
+                - node_b_id (str): node_b.node_id
+        """
+        start_time = time.perf_counter()
+        
+        # Steps 1-3: Create challenge
+        ch = node_a.create_challenge()
+        
+        # Steps 4-6: Verify challenge
+        success, failure_reason = node_b.verify_challenge(ch)
+        if not success:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                'success': False,
+                'failure_reason': failure_reason,
+                'duration_ms': elapsed_ms,
+                'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                'node_a_id': node_a.node_id,
+                'node_b_id': node_b.node_id
+            }
+        
+        # Steps 7-9: Generate response
+        nonce_b = node_b.crypto.generate_nonce()
+        ts_b = time.time()
+        nonce_a_bytes = bytes.fromhex(ch['nonce'])
+        
+        # CRITICAL: message structure is nonce_b + timestamp_packed + nonce_a
+        response_message = nonce_b + struct.pack('d', ts_b) + nonce_a_bytes
+        response_signature = node_b.crypto.sign(node_b._private_key, response_message)
+        
+        # Steps 10-11: Verify response
+        time_sync_window = node_a._config.get('time_sync_window', 5.0)
+        if abs(time.time() - ts_b) > time_sync_window:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                'success': False,
+                'failure_reason': 'RESPONSE_TIMESTAMP_EXPIRED',
+                'duration_ms': elapsed_ms,
+                'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                'node_a_id': node_a.node_id,
+                'node_b_id': node_b.node_id
+            }
+        
+        # Rebuild and verify response message
+        verify_message = nonce_b + struct.pack('d', ts_b) + nonce_a_bytes
+        if not node_a.crypto.verify(node_b.public_key, verify_message, response_signature):
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                'success': False,
+                'failure_reason': 'INVALID_RESPONSE_SIGNATURE',
+                'duration_ms': elapsed_ms,
+                'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                'node_a_id': node_a.node_id,
+                'node_b_id': node_b.node_id
+            }
+        
+        # Step 12: Return success result
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        return {
+            'success': True,
+            'failure_reason': None,
+            'duration_ms': elapsed_ms,
+            'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+            'node_a_id': node_a.node_id,
+            'node_b_id': node_b.node_id
+        }
+
+
 class Node:
     """Represents a node in the DQRMAN distributed mesh network.
     
