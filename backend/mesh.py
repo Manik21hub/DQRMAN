@@ -74,3 +74,48 @@ class TrustGraph:
             if node_data.get('status') == 'ACTIVE':
                 active.append(node_id)
         return active
+
+    def add_node(self, node_id, public_key):
+        """Add a node to the trust graph or verify its registration.
+
+        Registers a new node with its public key. If the node already exists
+        with a different public key, raises ValueError to prevent key confusion.
+
+        Args:
+            node_id: String identifier for the node.
+            public_key: Bytes containing the node's public key material.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If node_id is registered with a different public_key.
+        """
+        with self._lock:
+            # Check if node already registered with different key
+            if node_id in self._trust_table:
+                if self._trust_table[node_id] != public_key:
+                    raise ValueError(
+                        f'Node {node_id} already registered with a different public key'
+                    )
+                # Node exists with same key, return without action
+                return
+
+            # Add node to graph
+            self._graph.add_node(
+                node_id,
+                public_key=public_key,
+                joined_at=time.time(),
+                status='ACTIVE',
+                lat=0.0,
+                lon=0.0,
+            )
+
+            # Update trust table
+            self._trust_table[node_id] = public_key
+
+            # Update node count tracking
+            self._original_node_count = max(self._original_node_count, len(self._graph))
+
+            # Mark paths dirty
+            self._paths_dirty = True
