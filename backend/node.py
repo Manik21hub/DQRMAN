@@ -88,3 +88,99 @@ class Node:
         self.state = NodeState.INITIALIZING
         self.trust_table = {}
         self._lock = threading.Lock()
+        self._algorithm = algorithm
+    
+    def transition_to(self, new_state):
+        """Transition node to a new state.
+        
+        Args:
+            new_state: Target NodeState value.
+        """
+        with self._lock:
+            self.state = new_state
+    
+    def broadcast_join(self, neighbours):
+        """Broadcast join message to neighbours and transition to JOINING state.
+        
+        Builds a cryptographically signed join packet containing this node's
+        identity and public key, sends it as JSON to all neighbours, and 
+        transitions to JOINING state.
+        
+        Args:
+            neighbours: List of neighbour nodes to send join packet to.
+            
+        Returns:
+            The join packet dictionary containing node_id, public_key, signature,
+            and timestamp.
+        """
+        from backend.crypto import CryptoModule
+        
+        # Build message: concatenate node_id and public_key as bytes
+        node_id_bytes = bytes.fromhex(self.node_id)
+        message = node_id_bytes + self.public_key
+        
+        # Sign the message
+        crypto = CryptoModule(algorithm=self._algorithm)
+        signature = crypto.sign(self._private_key, message)
+        
+        # Create packet
+        packet = {
+            'node_id': self.node_id,
+            'public_key': self.public_key.hex(),
+            'signature': signature.hex(),
+            'timestamp': time.time()
+        }
+        
+        # Send JSON packet to each neighbour
+        packet_json = json.dumps(packet)
+        for neighbour in neighbours:
+            if hasattr(neighbour, 'receive_broadcast_join'):
+                neighbour.receive_broadcast_join(packet_json)
+        
+        # Transition to JOINING state
+        self.transition_to(NodeState.JOINING)
+        
+        return packet
+    
+    def verify_join(self, packet):
+        """Verify a join packet from another node.
+        
+        Validates the cryptographic signature of a join packet. If valid,
+        adds the sender to the trust table and transitions to ACTIVE if
+        currently in JOINING state.
+        
+        Args:
+            packet: Join packet dictionary with keys: node_id, public_key,
+                   signature, timestamp.
+                   
+        Returns:
+            Tuple of (success: bool, error: str or None).
+            If valid: (True, None)
+            If invalid: (False, 'INVALID_JOIN_SIGNATURE')
+        """
+        from backend.crypto import CryptoModule
+        
+        try:
+            # Reconstruct message from packet
+            node_id_bytes = bytes.fromhex(packet['node_id'])
+            public_key_bytes = bytes.fromhex(packet['public_key'])
+            signature_bytes = bytes.fromhex(packet['signature'])
+            
+            message = node_id_bytes + public_key_bytes
+            
+            # Verify signature
+            crypto = CryptoModule(algorithm=self._algorithm)
+            if not crypto.verify(public_key_bytes, message, signature_bytes):
+                return (False, 'INVALID_JOIN_SIGNATURE')
+            
+            # Signature is valid - add to trust table
+            with self._lock:
+                self.trust_table[packet['node_id']] = public_key_bytes
+                
+                # Transition to ACTIVE if in JOINING state
+                if self.state == NodeState.JOINING:
+                    self.state = NodeState.ACTIVE
+            
+            return (True, None)
+        except Exception:
+            return (False, 'INVALID_JOIN_SIGNATURE')
