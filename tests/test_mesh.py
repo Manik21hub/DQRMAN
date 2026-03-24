@@ -205,3 +205,29 @@ def test_quarantine_in_ring_preserves_non_adjacent_authentication():
     n2.transition_to(NodeState.ACTIVE)
     result = AuthProtocol().authenticate(n1, n2)
     assert result['success'] is True
+
+
+def test_survivors_authenticate():
+    mesh = TrustGraph()
+    nodes = [Node() for _ in range(10)]
+
+    for node in nodes:
+        node.transition_to(NodeState.ACTIVE)
+        mesh.add_node(node.node_id, node.public_key)
+
+    for i in range(len(nodes)):
+        for j in range(i + 1, len(nodes)):
+            result = AuthProtocol().authenticate(nodes[i], nodes[j])
+            if result['success']:
+                mesh.update_edge(nodes[i].node_id, nodes[j].node_id, auth_rate=1.0)
+                mesh.update_edge(nodes[j].node_id, nodes[i].node_id, auth_rate=1.0)
+
+    for node in nodes[:8]:
+        mesh.on_node_failure(node.node_id)
+
+    # 2 survivors out of 10 is exactly 20% and should be operational.
+    assert mesh.is_operational() is True
+
+    survivor_a, survivor_b = nodes[8], nodes[9]
+    survivor_result = AuthProtocol().authenticate(survivor_a, survivor_b)
+    assert survivor_result['success'] is True
