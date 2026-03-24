@@ -129,6 +129,9 @@ class Node:
         self.trust_table = {}
         self._lock = threading.Lock()
         self._algorithm = algorithm
+        self._config = config
+        self.crypto = crypto
+        self.nonce_cache = NonceCache()
     
     def transition_to(self, new_state):
         """Transition node to a new state.
@@ -224,3 +227,70 @@ class Node:
             return (True, None)
         except Exception:
             return (False, 'INVALID_JOIN_SIGNATURE')
+    
+    def create_challenge(self):
+        """Create an authentication challenge for peer verification.
+        
+        Implements SRS Section 8.2 Steps 1-3: generates a fresh nonce,
+        timestamps it, and signs the combined message.
+        
+        Returns:
+            Dictionary with node_id, public_key, nonce, timestamp, and signature.
+        """
+        # Step 1-2: Generate fresh nonce and timestamp
+        nonce = self.crypto.generate_nonce()
+        timestamp = time.time()
+        
+        # Step 3: Build message and sign
+        message = nonce + struct.pack('d', timestamp)
+        signature = self.crypto.sign(self._private_key, message)
+        
+        return {
+            'node_id': self.node_id,
+            'public_key': self.public_key.hex(),
+            'nonce': nonce.hex(),
+            'timestamp': timestamp,
+            'signature': signature.hex()
+        }
+    
+    def verify_challenge(self, challenge):
+        """Verify an authentication challenge from a peer node.
+        
+        Implements SRS Section 8.2 Steps 4-6: validates timestamp freshness,
+        checks for nonce replay, and verifies cryptographic signature.
+        
+        Args:
+            challenge: Dictionary with node_id, public_key, nonce, timestamp, signature.
+            
+        Returns:
+            Tuple of (success: bool, error: str or None).
+            If valid: (True, None)
+            If invalid: (False, error_reason)
+        """
+        # Step 1: Check state
+        if self.state in (NodeState.QUARANTINED, NodeState.DESTROYED, NodeState.INITIALIZING):
+            return (False, self.state.name)
+        
+        # Step 2: Check timestamp freshness
+        now = time.time()
+        time_sync_window = self._config.get('time_sync_window', 5.0)
+        if abs(now - challenge['timestamp']) > time_sync_window:
+            return (False, 'TIMESTAMP_EXPIRED')
+        
+        # Step 3: Check for nonce replay
+        nonce_bytes = bytes.fromhex(challenge['nonce'])
+        if self.nonce_cache.contains(nonce_bytes):
+            return (False, 'DUPLICATE_NONCE')
+        
+        # Step 4: Verify signature
+        message = nonce_bytes + struct.pack('d', challenge['timestamp'])
+        public_key_bytes = bytes.fromhex(challenge['public_key'])
+        signature_bytes = bytes.fromhex(challenge['signature'])
+        
+        if not self.crypto.verify(public_key_bytes, message, signature_bytes):
+            return (False, 'INVALID_SIGNATURE')
+        
+        # Step 5: Add nonce to cache
+        self.nonce_cache.add(nonce_bytes, time_sync_window)
+        
+        return (True, None)
