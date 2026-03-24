@@ -1,8 +1,12 @@
 import pytest
 import os
 import time
+import builtins
+import importlib.util
+from pathlib import Path
 
 from backend.crypto import CryptoError, CryptoModule
+import backend.crypto as crypto_mod
 
 
 @pytest.fixture
@@ -99,6 +103,86 @@ def test_sign_verify_latency() -> None:
 
     print(f"p50={p50 * 1000:.3f}ms p95={p95 * 1000:.3f}ms p99={p99 * 1000:.3f}ms")
     assert durations[949] < (threshold_ms / 1000.0)
+
+
+def test_crypto_module_import_handles_missing_oqs(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_path = Path(__file__).resolve().parents[1] / "backend" / "crypto.py"
+    spec = importlib.util.spec_from_file_location("crypto_no_oqs", str(module_path))
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None
+    assert spec.loader is not None
+
+    orig_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "oqs":
+            raise ImportError("oqs intentionally unavailable")
+        return orig_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    spec.loader.exec_module(module)
+
+    assert module.OQS_AVAILABLE is False
+    assert module.oqs is None
+
+
+def test_init_raises_when_oqs_not_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(crypto_mod, "OQS_AVAILABLE", False)
+    with pytest.raises(CryptoError):
+        CryptoModule()
+
+
+def test_generate_keypair_wraps_exceptions(cm: CryptoModule, monkeypatch: pytest.MonkeyPatch) -> None:
+    class BadSignature:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            raise RuntimeError("boom")
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(crypto_mod.oqs, "Signature", BadSignature)
+    with pytest.raises(CryptoError):
+        cm.generate_keypair()
+
+
+def test_sign_wraps_exceptions(cm: CryptoModule, monkeypatch: pytest.MonkeyPatch) -> None:
+    class BadSigner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def sign(self, _message):
+            raise RuntimeError("cannot sign")
+
+    monkeypatch.setattr(crypto_mod.oqs, "Signature", BadSigner)
+    with pytest.raises(CryptoError):
+        cm.sign(b"k", b"m")
+
+
+def test_verify_returns_false_on_verify_exception(cm: CryptoModule, monkeypatch: pytest.MonkeyPatch) -> None:
+    class BadVerifier:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def verify(self, _message, _signature, _public_key):
+            raise RuntimeError("cannot verify")
+
+    monkeypatch.setattr(crypto_mod.oqs, "Signature", BadVerifier)
+    assert cm.verify(b"pk", b"msg", b"sig") is False
 
 
 if __name__ == "__main__":

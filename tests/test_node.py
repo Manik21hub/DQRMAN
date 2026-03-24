@@ -7,7 +7,10 @@ import pytest
 import time
 import os
 import struct
-from backend.node import Node, AuthProtocol, NonceCache, NodeState
+import json
+import socket
+import backend.node as node_mod
+from backend.node import Node, AuthProtocol, NonceCache, NodeState, AnomalyLogger, HeartbeatReceiver, heartbeat_sender
 
 
 @pytest.fixture
@@ -326,6 +329,277 @@ def test_join_tampered_signature():
 
     result = node_b.verify_join(packet)
     assert result == (False, 'INVALID_JOIN_SIGNATURE')
+
+
+def test_anomaly_logger_quarantines_on_threshold():
+    node = Node()
+    node.transition_to(NodeState.ACTIVE)
+    logger = AnomalyLogger(node, threshold=2, window_seconds=30)
+
+    logger.record_failure('f1')
+    assert node.state == NodeState.ACTIVE
+    logger.record_failure('f2')
+
+    assert node.state == NodeState.QUARANTINED
+    assert len(logger.failures) == 2
+
+
+def test_anomaly_logger_filters_old_failures_and_log_entry():
+    node = Node()
+    logger = AnomalyLogger(node, threshold=2, window_seconds=1)
+    now = time.time()
+    logger.failures = [(now - 10, 'old'), (now, 'new')]
+
+    assert logger.check_anomaly() is False
+    entry = logger.get_log_entry()
+    assert entry['event_type'] == 'ANOMALY_ALERT'
+    assert entry['failure_count'] == 1
+    assert entry['failure_reasons'] == ['new']
+
+
+def test_authenticate_response_timestamp_expired_branch(node_a, node_b):
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
+    # Force expiry branch deterministically.
+    node_a._config['time_sync_window'] = -1.0
+
+    result = AuthProtocol().authenticate(node_a, node_b)
+    assert result['success'] is False
+    assert result['failure_reason'] == 'RESPONSE_TIMESTAMP_EXPIRED'
+
+
+def test_authenticate_invalid_response_signature_branch(node_a, node_b):
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
+
+    original_verify = node_a.crypto.verify
+    node_a.crypto.verify = lambda *_args, **_kwargs: False
+    try:
+        result = AuthProtocol().authenticate(node_a, node_b)
+    finally:
+        node_a.crypto.verify = original_verify
+
+    assert result['success'] is False
+    assert result['failure_reason'] == 'INVALID_RESPONSE_SIGNATURE'
+
+
+def test_transition_from_destroyed_raises_value_error():
+    node = Node()
+    node.state = NodeState.DESTROYED
+    with pytest.raises(ValueError):
+        node.transition_to(NodeState.ACTIVE)
+
+
+def test_broadcast_join_notifies_neighbour_callback():
+    class DummyNeighbour:
+        def __init__(self):
+            self.payload = None
+
+        def receive_broadcast_join(self, payload):
+            self.payload = payload
+
+    node = Node()
+    neighbour = DummyNeighbour()
+    packet = node.broadcast_join([neighbour])
+
+    assert packet['node_id'] == node.node_id
+    assert neighbour.payload is not None
+
+
+def test_verify_join_transitions_joining_to_active():
+    sender = Node()
+    receiver = Node()
+    receiver.state = NodeState.JOINING
+
+    packet = sender.broadcast_join([])
+    success, reason = receiver.verify_join(packet)
+
+    assert success is True
+    assert reason is None
+    assert receiver.state == NodeState.ACTIVE
+
+
+def test_verify_join_malformed_packet_returns_invalid_signature(node_b):
+    bad_packet = {
+        'node_id': 'not-hex',
+        'public_key': '00',
+        'signature': '00',
+        'timestamp': time.time(),
+    }
+    assert node_b.verify_join(bad_packet) == (False, 'INVALID_JOIN_SIGNATURE')
+
+
+def test_rejoin_resets_identity_and_rejoins_mesh():
+    class DummyMesh:
+        def __init__(self):
+            self.calls = []
+
+        def add_node(self, node_id, public_key):
+            self.calls.append((node_id, public_key))
+
+    node = Node()
+    old_node_id = node.node_id
+    mesh = DummyMesh()
+
+    assert node.rejoin(mesh, neighbours=[]) is True
+    assert node.node_id != old_node_id
+    assert len(mesh.calls) == 1
+    assert mesh.calls[0][0] == node.node_id
+    assert node.state == NodeState.JOINING
+
+
+def test_heartbeat_sender_closes_socket_on_generation_error(monkeypatch):
+    class DummySock:
+        def __init__(self):
+            self.closed = False
+
+        def setsockopt(self, *_args):
+            return None
+
+        def sendto(self, *_args):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    class OneLoopEvent:
+        def __init__(self):
+            self.done = False
+
+        def is_set(self):
+            return self.done
+
+        def wait(self, _interval):
+            self.done = True
+            return True
+
+    class DummyCrypto:
+        def sign(self, *_args):
+            raise RuntimeError('sign failed')
+
+    class DummyNode:
+        node_id = 'a' * 64
+        crypto = DummyCrypto()
+        private_key = b'k'
+
+    sock = DummySock()
+    monkeypatch.setattr(node_mod.socket, 'socket', lambda *_args, **_kwargs: sock)
+
+    heartbeat_sender(DummyNode(), [('127.0.0.1', 9999)], OneLoopEvent(), interval=0.0)
+    assert sock.closed is True
+
+
+def test_heartbeat_receiver_listen_updates_last_seen_and_checks_stale(monkeypatch):
+    sender = Node()
+    monitor = Node()
+    monitor.transition_to(NodeState.ACTIVE)
+    monitor.trust_table[sender.node_id] = sender.public_key
+
+    ts = time.time()
+    ts_bytes = struct.pack('d', ts)
+    sig = sender.crypto.sign(sender._private_key, ts_bytes)
+    packet_bytes = json.dumps(
+        {'node_id': sender.node_id, 'timestamp': ts, 'signature': sig.hex()}
+    ).encode('utf-8')
+
+    class FakeSock:
+        def __init__(self):
+            self.closed = False
+            self.recv_calls = 0
+
+        def setsockopt(self, *_args):
+            return None
+
+        def settimeout(self, *_args):
+            return None
+
+        def bind(self, *_args):
+            return None
+
+        def recvfrom(self, _n):
+            self.recv_calls += 1
+            if self.recv_calls == 1:
+                return packet_bytes, ('127.0.0.1', 12000)
+            raise socket.timeout()
+
+        def close(self):
+            self.closed = True
+
+    class StopAfterTwoChecks:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 2
+
+    fake_sock = FakeSock()
+    monkeypatch.setattr(node_mod.socket, 'socket', lambda *_args, **_kwargs: fake_sock)
+
+    receiver = HeartbeatReceiver(monitor, host='127.0.0.1', port=10001)
+    receiver.listen(StopAfterTwoChecks())
+
+    assert sender.node_id in receiver.last_seen
+    assert fake_sock.closed is True
+
+    receiver.last_seen[sender.node_id] = time.time() - 10.0
+    stale = receiver.check_neighbours(interval=1.0, timeout=1.0)
+    assert sender.node_id in stale
+
+
+def test_heartbeat_receiver_handles_unknown_invalid_and_malformed_packets(monkeypatch):
+    monitor = Node()
+    known = Node()
+    monitor.transition_to(NodeState.ACTIVE)
+    monitor.trust_table[known.node_id] = known.public_key
+
+    ts = time.time()
+    unknown_packet = json.dumps(
+        {'node_id': 'f' * 64, 'timestamp': ts, 'signature': '00'}
+    ).encode('utf-8')
+    invalid_sig_packet = json.dumps(
+        {'node_id': known.node_id, 'timestamp': ts, 'signature': '00'}
+    ).encode('utf-8')
+    malformed_packet = b'{not-json'
+
+    class FakeSock:
+        def __init__(self):
+            self.closed = False
+            self.items = [unknown_packet, invalid_sig_packet, malformed_packet]
+
+        def setsockopt(self, *_args):
+            return None
+
+        def settimeout(self, *_args):
+            return None
+
+        def bind(self, *_args):
+            return None
+
+        def recvfrom(self, _n):
+            if self.items:
+                return self.items.pop(0), ('127.0.0.1', 12001)
+            raise socket.timeout()
+
+        def close(self):
+            self.closed = True
+
+    class StopAfterFourChecks:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 4
+
+    fake_sock = FakeSock()
+    monkeypatch.setattr(node_mod.socket, 'socket', lambda *_args, **_kwargs: fake_sock)
+
+    receiver = HeartbeatReceiver(monitor, host='127.0.0.1', port=10001)
+    receiver.listen(StopAfterFourChecks())
+
+    assert receiver.last_seen == {}
+    assert fake_sock.closed is True
 
 
 @pytest.mark.skip(reason='Placeholder: activates in Day 3 after TrustGraph is built')
