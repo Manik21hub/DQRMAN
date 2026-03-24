@@ -3,7 +3,7 @@ simulation: # Simulation behavior settings
   auto_auth: true # Automatically run authentication flow
 
 crypto: # Cryptography algorithm settings
-  dilithium_variant: Dilithium3 # Dilithium security variant to use
+  dilithium_variant: ML-DSA-65 # Dilithium security variant to use
 
 network: # Mesh network timing and path settings
   heartbeat_interval: 1.0 # Seconds between heartbeat messages

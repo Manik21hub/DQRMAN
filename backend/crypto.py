@@ -15,8 +15,8 @@ except ImportError:
     OQS_AVAILABLE = False
 
 
-DEFAULT_ALGORITHM = "Dilithium3"
-VALID_ALGORITHMS = ["Dilithium2", "Dilithium3", "Dilithium5"]
+DEFAULT_ALGORITHM = "ML-DSA-65"
+VALID_ALGORITHMS = ["Dilithium2", "ML-DSA-65", "Dilithium5"]
 
 
 class CryptoError(Exception):
@@ -68,7 +68,7 @@ class CryptoModule:
 
         Returns:
             tuple[bytes, bytes]: A tuple of (public_key, private_key). For
-                Dilithium3, the public key is 1952 bytes and the private key is
+                ML-DSA-65, the public key is 1952 bytes and the private key is
                 4000 bytes.
 
         Raises:
@@ -92,7 +92,7 @@ class CryptoModule:
             message (bytes): The message payload to sign.
 
         Returns:
-            bytes: The generated signature. For Dilithium3, signature size is
+            bytes: The generated signature. For ML-DSA-65, signature size is
                 3293 bytes.
 
         Raises:
