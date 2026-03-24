@@ -630,3 +630,60 @@ class TrustGraph:
                 f'Rerouted paths after failure of {failed_node_id[:8]}: '
                 f'{survivor_count} survivors remain, reroute took {elapsed_ms:.1f}ms'
             )
+
+    def quarantine_node(self, node_id):
+        """Isolate a compromised or misbehaving node from the mesh.
+
+        Sets node status to QUARANTINED and removes all direct edges to/from it.
+        The node remains in the graph for forensics but is isolated from routing.
+        Unaffected nodes continue operating normally. Useful for handling
+        detected Byzantine failures or anomalies.
+
+        Args:
+            node_id: Node identifier to quarantine.
+
+        Returns:
+            list: Node IDs of direct neighbours that were affected (had edges removed).
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            # Set node status to quarantined
+            if node_id in self._graph:
+                self._graph.nodes[node_id]['status'] = 'QUARANTINED'
+
+            # Collect all direct neighbours (predecessors and successors)
+            predecessors = list(self._graph.predecessors(node_id))
+            successors = list(self._graph.successors(node_id))
+            neighbours = list(set(predecessors + successors))
+
+            # Build list of edges to remove
+            edges_to_remove = []
+            # Remove edges FROM quarantined node (outgoing)
+            for successor in successors:
+                edges_to_remove.append((node_id, successor))
+            # Remove edges TO quarantined node (incoming)
+            for predecessor in predecessors:
+                edges_to_remove.append((predecessor, node_id))
+
+            # Remove all edges
+            self._graph.remove_edges_from(edges_to_remove)
+
+            # Mark paths dirty
+            self._paths_dirty = True
+
+            # Count non-adjacent nodes
+            all_nodes = set(self._graph.nodes())
+            adjacent_nodes = set(neighbours + [node_id])
+            non_adjacent_nodes = all_nodes - adjacent_nodes
+            non_adjacent_count = len(non_adjacent_nodes)
+
+            # Log quarantine action
+            logger.warning(
+                f'Quarantined node {node_id[:8]}: '
+                f'{len(neighbours)} direct neighbours affected, '
+                f'{non_adjacent_count} nodes completely unaffected'
+            )
+
+            return neighbours
