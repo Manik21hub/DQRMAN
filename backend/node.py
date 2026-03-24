@@ -23,6 +23,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _build_auth_message(nonce, timestamp, extra=b''):
+    """Build an authentication message from nonce, timestamp, and optional extra data.
+    
+    Combines cryptographic components in a standardized format:
+    message = nonce + struct.pack('d', timestamp) + extra
+    
+    Args:
+        nonce: Bytes object representing the challenge nonce.
+        timestamp: Float representing the message timestamp (packed as C double).
+        extra: Optional bytes to append after timestamp. Defaults to empty bytes.
+               For challenge creation, extra is empty. For step 8 responses,
+               extra must be nonce_A bytes to bind the response to the specific
+               challenge it is answering.
+               
+    Returns:
+        Bytes: Concatenated message (nonce + packed_timestamp + extra)
+    """
+    return nonce + struct.pack('d', timestamp) + extra
+
+
 @dataclasses.dataclass
 class NodeIdentity:
     """Represents the cryptographic identity of a network node.
@@ -145,7 +165,7 @@ class AuthProtocol:
         nonce_a_bytes = bytes.fromhex(ch['nonce'])
         
         # CRITICAL: message structure is nonce_b + timestamp_packed + nonce_a
-        response_message = nonce_b + struct.pack('d', ts_b) + nonce_a_bytes
+        response_message = _build_auth_message(nonce_b, ts_b, nonce_a_bytes)
         response_signature = node_b.crypto.sign(node_b._private_key, response_message)
         
         # Steps 10-11: Verify response
@@ -162,7 +182,7 @@ class AuthProtocol:
             }
         
         # Rebuild and verify response message
-        verify_message = nonce_b + struct.pack('d', ts_b) + nonce_a_bytes
+        verify_message = _build_auth_message(nonce_b, ts_b, nonce_a_bytes)
         if not node_a.crypto.verify(node_b.public_key, verify_message, response_signature):
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             return {
@@ -346,7 +366,7 @@ class Node:
         timestamp = time.time()
         
         # Step 3: Build message and sign
-        message = nonce + struct.pack('d', timestamp)
+        message = _build_auth_message(nonce, timestamp)
         signature = self.crypto.sign(self._private_key, message)
         
         return {
