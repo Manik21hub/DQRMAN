@@ -52,6 +52,46 @@ class NodeState(enum.Enum):
     DESTROYED = enum.auto()
 
 
+class NonceCache:
+    """Cache of nonces with TTL-based expiration to prevent replay attacks.
+    
+    Nonces are stored using their hex representation (.hex()) rather than str()
+    to ensure proper comparison and prevent bypass vulnerabilities. This is
+    CRITICAL: str(b'\\xab') produces the string 'b\\xab' whereas b'\\xab'.hex()
+    produces 'ab'. Using str() would allow attackers to craft nonces that bypass
+    the cache check by exploiting this representation mismatch.
+    """
+    
+    def __init__(self):
+        """Initialize empty nonce cache."""
+        self._nonces = {}
+    
+    def contains(self, nonce):
+        """Check if nonce exists and is not expired.
+        
+        Evicts expired entries before checking membership.
+        
+        Args:
+            nonce: Bytes object representing the nonce.
+            
+        Returns:
+            bool: True if nonce exists and has not expired, False otherwise.
+        """
+        now = time.time()
+        # Evict expired entries
+        self._nonces = {k: v for k, v in self._nonces.items() if v > now}
+        return nonce.hex() in self._nonces
+    
+    def add(self, nonce, ttl):
+        """Add a nonce with given TTL.
+        
+        Args:
+            nonce: Bytes object representing the nonce.
+            ttl: Time-to-live in seconds. Expiry is set to now + ttl.
+        """
+        self._nonces[nonce.hex()] = time.time() + ttl
+
+
 class Node:
     """Represents a node in the DQRMAN distributed mesh network.
     
