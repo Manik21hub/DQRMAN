@@ -97,11 +97,21 @@ class NonceCache:
     """
     
     def __init__(self):
-        """Initialize empty nonce cache."""
+        """Initialize an empty nonce cache.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
         self._nonces = {}
     
     def contains(self, nonce):
-        """Check if nonce exists and is not expired.
+        """Check whether a nonce exists and is not expired.
         
         Evicts expired entries before checking membership.
         
@@ -110,6 +120,9 @@ class NonceCache:
             
         Returns:
             bool: True if nonce exists and has not expired, False otherwise.
+
+        Raises:
+            None.
         """
         now = time.time()
         # Evict expired entries
@@ -117,11 +130,17 @@ class NonceCache:
         return nonce.hex() in self._nonces
     
     def add(self, nonce, ttl):
-        """Add a nonce with given TTL.
+        """Add a nonce with a time-to-live value.
         
         Args:
             nonce: Bytes object representing the nonce.
             ttl: Time-to-live in seconds. Expiry is set to now + ttl.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
         """
         self._nonces[nonce.hex()] = time.time() + ttl
 
@@ -130,12 +149,18 @@ class AnomalyLogger:
     """Tracks recent authentication failures and quarantines anomalous nodes."""
 
     def __init__(self, node, threshold=5, window_seconds=30):
-        """Initialize anomaly tracker for a node.
+        """Initialize anomaly tracking state for a monitored node.
 
         Args:
             node: Node instance being monitored.
             threshold: Number of recent failures required to trigger anomaly.
             window_seconds: Sliding time window used for anomaly detection.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
         """
         self.node = node
         self.threshold = threshold
@@ -143,7 +168,17 @@ class AnomalyLogger:
         self.failures = []
 
     def record_failure(self, reason):
-        """Record a failure reason and quarantine the node on anomaly."""
+        """Record a failure and quarantine the node when anomaly criteria are met.
+
+        Args:
+            reason: Failure reason string to record.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Propagated if node.transition_to rejects the transition.
+        """
         self.failures.append((time.time(), reason))
         if self.check_anomaly() and self.node.state not in (
             NodeState.QUARANTINED,
@@ -152,14 +187,34 @@ class AnomalyLogger:
             self.node.transition_to(NodeState.QUARANTINED)
 
     def check_anomaly(self):
-        """Return True when recent failure count meets or exceeds threshold."""
+        """Evaluate whether recent failures meet or exceed anomaly threshold.
+
+        Args:
+            None.
+
+        Returns:
+            bool: True when recent failure count is at least threshold.
+
+        Raises:
+            None.
+        """
         now = time.time()
         cutoff = now - self.window_seconds
         self.failures = [(ts, r) for ts, r in self.failures if ts >= cutoff]
         return len(self.failures) >= self.threshold
 
     def get_log_entry(self):
-        """Build anomaly alert payload for structured logging."""
+        """Build structured anomaly alert payload for logging.
+
+        Args:
+            None.
+
+        Returns:
+            dict: Alert payload with event type, node, failure counts, reasons, and timestamps.
+
+        Raises:
+            None.
+        """
         now = time.time()
         cutoff = now - self.window_seconds
         recent = [(ts, r) for ts, r in self.failures if ts >= cutoff]
@@ -180,7 +235,7 @@ class AuthProtocol:
     """
     
     def authenticate(self, node_a, node_b):
-        """Authenticate node_b to node_a using challenge-response protocol.
+        """Authenticate two peers per SRS Section 8.2 challenge-response flow.
         
         Steps 1-3: node_a creates and sends challenge.
         Steps 4-6: node_b verifies challenge and accepts/rejects.
@@ -200,6 +255,9 @@ class AuthProtocol:
                 - timestamp (str): ISO 8601 UTC timestamp with Z
                 - node_a_id (str): node_a.node_id
                 - node_b_id (str): node_b.node_id
+
+        Raises:
+            None.
         """
         start_time = time.perf_counter()
         
@@ -288,7 +346,7 @@ class Node:
     """
     
     def __init__(self, config=None):
-        """Initialize a new network node.
+        """Initialize node cryptographic identity and state for FR-01 bootstrap.
         
         Args:
             config: Optional configuration dictionary containing 'dilithium_variant'.
@@ -316,7 +374,7 @@ class Node:
         self.nonce_cache = NonceCache()
     
     def transition_to(self, new_state):
-        """Transition node to a new state.
+        """Transition the node to a new lifecycle state.
         
         Args:
             new_state: Target NodeState value.
@@ -335,7 +393,7 @@ class Node:
             self.state = new_state
     
     def broadcast_join(self, neighbours):
-        """Broadcast join message to neighbours and transition to JOINING state.
+        """Broadcast a signed join packet to satisfy FR-02 neighbour discovery.
         
         Builds a cryptographically signed join packet containing this node's
         identity and public key, sends it as JSON to all neighbours, and 
@@ -347,6 +405,9 @@ class Node:
         Returns:
             The join packet dictionary containing node_id, public_key, signature,
             and timestamp.
+
+        Raises:
+            CryptoError: If signature generation fails.
         """
         from backend.crypto import CryptoModule
         
@@ -378,7 +439,7 @@ class Node:
         return packet
     
     def verify_join(self, packet):
-        """Verify a join packet from another node.
+        """Verify a received join packet and update trust state.
         
         Validates the cryptographic signature of a join packet. If valid,
         adds the sender to the trust table and transitions to ACTIVE if
@@ -392,6 +453,9 @@ class Node:
             Tuple of (success: bool, error: str or None).
             If valid: (True, None)
             If invalid: (False, 'INVALID_JOIN_SIGNATURE')
+
+        Raises:
+            None.
         """
         from backend.crypto import CryptoModule
         
@@ -421,13 +485,16 @@ class Node:
             return (False, 'INVALID_JOIN_SIGNATURE')
     
     def create_challenge(self):
-        """Create an authentication challenge for peer verification.
+        """Create a signed authentication challenge for peer verification.
         
         Implements SRS Section 8.2 Steps 1-3: generates a fresh nonce,
         timestamps it, and signs the combined message.
         
         Returns:
             Dictionary with node_id, public_key, nonce, timestamp, and signature.
+
+        Raises:
+            CryptoError: If challenge signing fails.
         """
         # Step 1-2: Generate fresh nonce and timestamp
         nonce = self.crypto.generate_nonce()
@@ -446,7 +513,7 @@ class Node:
         }
     
     def verify_challenge(self, challenge):
-        """Verify an authentication challenge from a peer node.
+        """Verify challenge freshness and signature for FR-04 FR-05 FR-06.
         
         Implements SRS Section 8.2 Steps 4-6: validates timestamp freshness,
         checks for nonce replay, and verifies cryptographic signature.
@@ -458,6 +525,9 @@ class Node:
             Tuple of (success: bool, error: str or None).
             If valid: (True, None)
             If invalid: (False, error_reason)
+
+        Raises:
+            None.
         """
         # Step 1: Check state
         if self.state in (NodeState.QUARANTINED, NodeState.DESTROYED, NodeState.INITIALIZING):
@@ -486,3 +556,28 @@ class Node:
         self.nonce_cache.add(nonce_bytes, time_sync_window)
         
         return (True, None)
+
+    def rejoin(self, mesh, neighbours):
+        """Rejoin the mesh after a crash for NFR-13 recovery handling.
+
+        Args:
+            mesh: Mesh object supporting add_node(node_id, public_key).
+            neighbours: List of neighbour nodes to receive join broadcast.
+
+        Returns:
+            bool: True when rejoin sequence completes.
+
+        Raises:
+            ValueError: If a terminal-state transition is attempted during rejoin.
+        """
+        self.public_key, self._private_key = self.crypto.generate_keypair()
+        self.node_id = self.crypto.derive_node_id(self.public_key)
+        self.nonce_cache = NonceCache()
+        self.state = NodeState.INITIALIZING
+
+        mesh.add_node(self.node_id, self.public_key)
+        self.broadcast_join(neighbours)
+        self.transition_to(NodeState.JOINING)
+
+        logger.info('Node %s rejoined after a crash', self.node_id[:8])
+        return True
