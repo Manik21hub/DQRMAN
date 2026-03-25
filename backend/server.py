@@ -333,18 +333,38 @@ def post_location():
 		return jsonify({'error': 'MISSING_COORDINATES'}), 400
 
 	mesh.scatter_nodes_geographically(lat, lon, spread_m=accuracy)
-	nodes = _serialize_nodes()
+	nodes = []
+	for node_id, attrs in mesh._graph.nodes(data=True):
+		nodes.append(
+			{
+				'node_id': node_id,
+				'status': attrs.get('status'),
+				'trust_score': attrs.get('trust_score', 0.0),
+				'lat': attrs.get('lat'),
+				'lon': attrs.get('lon'),
+				'joined_at': attrs.get('joined_at'),
+			}
+		)
 	edges = _serialize_edges()
 	event = {
-		'event_type': 'NODE_POSITION_UPDATE',
+		'event_type': EVENT_LOCATION_UPDATED,
 		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
 		'payload': {
 			'lat': lat,
 			'lon': lon,
 			'accuracy': accuracy,
+			'nodes': nodes,
 		},
 	}
 	emit_mesh_update(nodes, edges, [event])
+	log_event(
+		EVENT_LOCATION_UPDATED,
+		{
+			'lat': lat,
+			'lon': lon,
+			'accuracy': accuracy,
+		},
+	)
 
 	return jsonify({'success': True, 'node_count': len(nodes)})
 
