@@ -90,6 +90,117 @@ class MeshMap {
       className: 'drone-icon'
     });
   }
+
+  /**
+   * Update or create markers for nodes on the map.
+   * @param {Array} nodes - Array of node objects with id, status, lat, lon
+   */
+  _updateMarkers(nodes) {
+    const nodeStatusColors = {
+      'ACTIVE': '#22c55e',
+      'DESTROYED': '#ef4444',
+      'QUARANTINED': '#f97316',
+      'HEALING': '#3b82f6',
+      'ISOLATED': '#a855f7'
+    };
+
+    const nodeIds = new Set();
+    nodes.forEach(node => {
+      if (!node.lat || !node.lon) return;
+      nodeIds.add(node.id);
+
+      const colour = nodeStatusColors[node.status] || '#a855f7';
+      const icon = this._droneIcon(colour, 28);
+
+      if (this._markers[node.id]) {
+        // Update existing marker
+        this._markers[node.id].setLatLng([node.lat, node.lon]);
+        this._markers[node.id].setIcon(icon);
+      } else {
+        // Create new marker
+        const marker = L.marker([node.lat, node.lon], { icon })
+          .bindTooltip(`${node.id.substring(0, 8)} (${node.status})`, { permanent: false })
+          .addTo(this.map);
+        this._markers[node.id] = marker;
+      }
+    });
+
+    // Remove markers for nodes no longer in the list
+    Object.keys(this._markers).forEach(id => {
+      if (!nodeIds.has(id)) {
+        this.map.removeLayer(this._markers[id]);
+        delete this._markers[id];
+      }
+    });
+  }
+
+  /**
+   * Update or create polylines for edges on the map.
+   * @param {Array} nodes - Array of node objects with id, lat, lon
+   * @param {Array} edges - Array of edge objects with source, target, weight
+   */
+  _updateEdges(nodes, edges) {
+    // Build lat/lon lookup from nodes
+    const nodePositions = {};
+    nodes.forEach(node => {
+      if (node.lat && node.lon) {
+        nodePositions[node.id] = { lat: node.lat, lon: node.lon };
+      }
+    });
+
+    const edgeKeys = new Set();
+    edges.forEach(edge => {
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      const edgeKey = `${sourceId}--${targetId}`;
+
+      if (!nodePositions[sourceId] || !nodePositions[targetId]) return;
+      edgeKeys.add(edgeKey);
+
+      const latlngs = [
+        [nodePositions[sourceId].lat, nodePositions[sourceId].lon],
+        [nodePositions[targetId].lat, nodePositions[targetId].lon]
+      ];
+
+      const weight = edge.weight || 0;
+      const colour = '#3b82f6';
+      const lineWeight = 1 + weight * 4;
+      const opacity = 0.2 + weight * 0.6;
+
+      if (this._edges[edgeKey]) {
+        // Update existing polyline
+        this._edges[edgeKey].setLatLngs(latlngs);
+        this._edges[edgeKey].setStyle({ color: colour, weight: lineWeight, opacity });
+      } else {
+        // Create new polyline
+        const polyline = L.polyline(latlngs, {
+          color: colour,
+          weight: lineWeight,
+          opacity,
+          dashArray: null
+        }).addTo(this.map);
+        this._edges[edgeKey] = polyline;
+      }
+    });
+
+    // Remove stale polylines
+    Object.keys(this._edges).forEach(key => {
+      if (!edgeKeys.has(key)) {
+        this.map.removeLayer(this._edges[key]);
+        delete this._edges[key];
+      }
+    });
+  }
+
+  /**
+   * Update map with new nodes and edges data.
+   * @param {Array} nodes - Array of node objects
+   * @param {Array} edges - Array of edge objects
+   */
+  setData(nodes, edges) {
+    this._updateMarkers(nodes);
+    this._updateEdges(nodes, edges);
+  }
 }
 
 window.MeshMap = MeshMap;
