@@ -1,0 +1,12 @@
+[run]
+source = backend
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+
+omit =
+    backend/server.py
+    backend/protocol.py
