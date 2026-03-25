@@ -357,6 +357,28 @@ def test_anomaly_logger_filters_old_failures_and_log_entry():
     assert entry['failure_reasons'] == ['new']
 
 
+def test_anomaly_logger_quarantine_also_calls_mesh_quarantine():
+    class DummyMesh:
+        def __init__(self):
+            self.called = False
+            self.node_id = None
+
+        def quarantine_node(self, node_id):
+            self.called = True
+            self.node_id = node_id
+
+    node = Node()
+    node.transition_to(NodeState.ACTIVE)
+    mesh = DummyMesh()
+    logger = AnomalyLogger(node, threshold=1, window_seconds=30, mesh=mesh)
+
+    logger.record_failure('f1')
+
+    assert node.state == NodeState.QUARANTINED
+    assert mesh.called is True
+    assert mesh.node_id == node.node_id
+
+
 def test_authenticate_response_timestamp_expired_branch(node_a, node_b):
     node_a.transition_to(NodeState.ACTIVE)
     node_b.transition_to(NodeState.ACTIVE)

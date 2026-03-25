@@ -162,13 +162,14 @@ class NonceCache:
 class AnomalyLogger:
     """Tracks recent authentication failures and quarantines anomalous nodes."""
 
-    def __init__(self, node, threshold=5, window_seconds=30):
+    def __init__(self, node, threshold=5, window_seconds=30, mesh=None):
         """Initialize anomaly tracking state for a monitored node.
 
         Args:
             node: Node instance being monitored.
             threshold: Number of recent failures required to trigger anomaly.
             window_seconds: Sliding time window used for anomaly detection.
+            mesh: Optional mesh reference used for topology-level quarantine.
 
         Returns:
             None.
@@ -179,6 +180,7 @@ class AnomalyLogger:
         self.node = node
         self.threshold = threshold
         self.window_seconds = window_seconds
+        self.mesh = mesh
         self.failures = []
 
     def record_failure(self, reason):
@@ -199,6 +201,8 @@ class AnomalyLogger:
             NodeState.DESTROYED,
         ):
             self.node.transition_to(NodeState.QUARANTINED)
+            if self.mesh is not None:
+                self.mesh.quarantine_node(self.node.node_id)
 
     def check_anomaly(self):
         """Evaluate whether recent failures meet or exceed anomaly threshold.
@@ -391,11 +395,8 @@ class Node:
         
         # Initialize TCP server
         self.port = config.get('port', 9000)
-        self.tcp_server = NodeTCPServer(self, '0.0.0.0', self.port)
-        
-        # Start TCP server in daemon thread
-        server_thread = threading.Thread(target=self.tcp_server.serve_forever, daemon=True)
-        server_thread.start()
+        self.tcp_server = NodeTCPServer('0.0.0.0', self.port)
+        self.tcp_server.start()
         
         logger.info('TCP server started on port %d', self.port)
     
@@ -631,7 +632,10 @@ class Node:
 
         # Close TCP server if it exists
         if hasattr(self, 'tcp_server'):
-            self.tcp_server.server_close()
+            if hasattr(self.tcp_server, 'server_close'):
+                self.tcp_server.server_close()
+            elif hasattr(self.tcp_server, 'stop'):
+                self.tcp_server.stop()
 
         # Transition to terminal state
         self.transition_to(NodeState.DESTROYED)
