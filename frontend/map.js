@@ -116,11 +116,15 @@ class MeshMap {
         // Update existing marker
         this._markers[node.id].setLatLng([node.lat, node.lon]);
         this._markers[node.id].setIcon(icon);
+        this._markers[node.id]._nodeColour = colour;
+        this._markers[node.id]._nodeStatus = node.status;
       } else {
         // Create new marker
         const marker = L.marker([node.lat, node.lon], { icon })
           .bindTooltip(`${node.id.substring(0, 8)} (${node.status})`, { permanent: false })
           .addTo(this.map);
+        marker._nodeColour = colour;
+        marker._nodeStatus = node.status;
         this._markers[node.id] = marker;
       }
     });
@@ -290,6 +294,76 @@ class MeshMap {
         }
       });
     }, 2000);
+  }
+
+  /**
+   * Show attack animation at a node location.
+   * @param {string} nodeId - ID of the attacked node
+   * @param {string} [attackType] - Optional attack type (e.g., 'spoof')
+   */
+  showAttack(nodeId, attackType) {
+    const marker = this._markers[nodeId];
+    if (!marker) return;
+
+    const markerLatLng = marker.getLatLng();
+    const nodeColour = marker._nodeColour || '#22c55e';
+
+    // Clear any existing attack animation for this node
+    if (this._ato.has(nodeId)) {
+      const existingTimeouts = this._ato.get(nodeId);
+      existingTimeouts.forEach(id => clearTimeout(id));
+      existingTimeouts.forEach(id => clearInterval(id));
+    }
+    const timeoutIds = [];
+
+    // Inner circle: red fill, 40% opacity
+    const innerCircle = L.circle(markerLatLng, {
+      radius: 80,
+      color: '#ef4444',
+      fill: true,
+      fillColor: '#ef4444',
+      fillOpacity: 0.4,
+      weight: 0,
+      opacity: 0
+    }).addTo(this.map);
+
+    // Outer ring circle: red border, no fill, 60% opacity
+    const outerCircle = L.circle(markerLatLng, {
+      radius: 200,
+      color: '#ef4444',
+      fill: false,
+      weight: 2,
+      opacity: 0.6
+    }).addTo(this.map);
+
+    // Temporarily enlarge drone icon to 34 pixels
+    const enlargedIcon = this._droneIcon(nodeColour, 34);
+    marker.setIcon(enlargedIcon);
+
+    // Outer ring pulse animation: every 300ms, reduce opacity by 0.12, remove after 4 steps
+    let pulseStep = 0;
+    const pulseInterval = setInterval(() => {
+      pulseStep++;
+      if (pulseStep >= 4) {
+        clearInterval(pulseInterval);
+        this.map.removeLayer(outerCircle);
+      } else {
+        const newOpacity = 0.6 - pulseStep * 0.12;
+        outerCircle.setStyle({ opacity: newOpacity });
+      }
+    }, 300);
+    timeoutIds.push(pulseInterval);
+
+    // After 1500ms: remove inner circle and restore normal icon size
+    const cleanupTimeout = setTimeout(() => {
+      this.map.removeLayer(innerCircle);
+      const normalIcon = this._droneIcon(nodeColour, 28);
+      marker.setIcon(normalIcon);
+      this._ato.delete(nodeId);
+    }, 1500);
+    timeoutIds.push(cleanupTimeout);
+
+    this._ato.set(nodeId, timeoutIds);
   }
 }
 
