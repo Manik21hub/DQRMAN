@@ -1,18 +1,20 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import yaml
 import pathlib
 import logging
+import argparse
 import json
 import time
 import datetime
 import threading
 import os
 import requests
+from backend.mesh import TrustGraph
 
 # Ensure log directory exists before configuring any file handlers.
 pathlib.Path('logs').mkdir(parents=True, exist_ok=True)
@@ -30,6 +32,9 @@ flush_timer = None
 mesh = None
 ALLOWED_ATTACK_TYPES = {'replay', 'spoof', 'jamming'}
 LOG_FILE_PATH = pathlib.Path(os.getenv('DQRMAN_LOG_FILE', 'logs/events.log'))
+FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / 'frontend'
+FRONTEND_VENDOR_DIR = FRONTEND_DIR / 'vendor'
+TILES_CACHE_DIR = FRONTEND_VENDOR_DIR / 'tiles'
 
 
 def _current_mesh_state():
@@ -140,6 +145,56 @@ def list_nodes():
 	return jsonify(_serialize_nodes())
 
 
+@app.get('/health')
+def health():
+	"""Return service health metadata."""
+	return jsonify(
+		{
+			'status': 'ok',
+			'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+			'version': '1.0.0-phase1',
+		}
+	)
+
+
+@app.get('/')
+def serve_index():
+	"""Serve frontend index page."""
+	return send_from_directory(FRONTEND_DIR, 'index.html')
+
+
+@app.get('/vendor/<path:filename>')
+def serve_vendor(filename):
+	"""Serve static assets from frontend/vendor directory."""
+	return send_from_directory(FRONTEND_VENDOR_DIR, filename)
+
+
+@app.get('/osm-tiles/<int:z>/<int:x>/<int:y>.png')
+def serve_osm_tile(z, x, y):
+	"""Serve OSM tile from local cache or proxy and cache it."""
+	tile_dir = TILES_CACHE_DIR / str(z) / str(x)
+	tile_name = f'{y}.png'
+	cached_tile = tile_dir / tile_name
+
+	if cached_tile.exists():
+		return send_from_directory(tile_dir, tile_name)
+
+	osm_url = f'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+	headers = {
+		'User-Agent': 'DQRMAN/1.0.0-phase1 (+https://openstreetmap.org)'
+	}
+	try:
+		response = requests.get(osm_url, headers=headers, timeout=10)
+		if response.status_code != 200:
+			return jsonify({'error': 'TILE_FETCH_FAILED'}), 502
+
+		tile_dir.mkdir(parents=True, exist_ok=True)
+		cached_tile.write_bytes(response.content)
+		return app.response_class(response.content, mimetype='image/png')
+	except requests.RequestException:
+		return jsonify({'error': 'TILE_FETCH_FAILED'}), 502
+
+
 @app.get('/api/v1/events')
 def list_events():
 	"""Return last 100 JSON log lines sorted newest first."""
@@ -244,3 +299,51 @@ def delete_node(node_id):
 			'operational': operational,
 		}
 	)
+
+
+def _init_mesh(node_count):
+	"""Initialize in-memory mesh with placeholder nodes for phase-1 server runtime."""
+	global mesh
+	mesh = TrustGraph()
+
+	for index in range(node_count):
+		node_id = f'node-{index + 1:03d}'
+		public_key = f'pubkey-{index + 1:03d}'.encode('utf-8')
+		mesh.add_node(node_id, public_key)
+		mesh._graph.nodes[node_id]['trust_score'] = 1.0
+
+
+def _configure_logging(level_name):
+	"""Configure root logging level from CLI option."""
+	level = getattr(logging, str(level_name).upper(), logging.INFO)
+	logging.basicConfig(
+		level=level,
+		format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+	)
+
+
+def main():
+	"""CLI entry point for running the Flask-SocketIO server."""
+	parser = argparse.ArgumentParser(description='Run DQRMAN phase-1 server')
+	parser.add_argument('--port', type=int, default=8080)
+	parser.add_argument('--nodes', type=int, default=10)
+	parser.add_argument('--log-level', default='INFO')
+	parser.add_argument('--kill', dest='kill_node_id', default=None)
+	args = parser.parse_args()
+
+	_configure_logging(args.log_level)
+	_init_mesh(args.nodes)
+
+	if args.kill:
+		if args.kill_node_id in mesh._graph:
+			mesh.on_node_failure(args.kill_node_id)
+			logger.info('Destroyed node via --kill: %s', args.kill_node_id)
+		else:
+			logger.warning('Requested --kill node not found: %s', args.kill_node_id)
+
+	logger.info('Starting server on port %d', args.port)
+	socketio.run(app, host='0.0.0.0', port=args.port)
+
+
+if __name__ == '__main__':
+	main()
