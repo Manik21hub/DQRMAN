@@ -76,6 +76,32 @@
       padding: 8px 10px;
       font-size: 14px;
     }
+
+    @keyframes auth-pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    @keyframes attack-flash {
+      0%, 100% {
+        stroke: #111827;
+      }
+      50% {
+        stroke: #ef4444;
+      }
+    }
+
+    .auth-pulse {
+      animation: auth-pulse 800ms ease-in-out;
+    }
+
+    .attack-flash {
+      animation: attack-flash 1500ms ease-in-out;
+    }
   </style>
 </head>
 <body>

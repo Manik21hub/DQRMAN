@@ -101,13 +101,36 @@ class MeshVisualizer {
 
     const attackClass = className || 'attack-highlight';
     node.classed(attackClass, true);
+    node.classed('attack-flash', true);
 
     const timeoutId = setTimeout(() => {
       node.classed(attackClass, false);
+      node.classed('attack-flash', false);
       this.attackTimeouts.delete(nodeId);
     }, 1500);
 
     this.attackTimeouts.set(nodeId, timeoutId);
+  }
+
+  showAuthPulse(nodeId) {
+    const existingTimeout = this.attackTimeouts.get('auth-' + nodeId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    const node = this.nodeSelection.filter((d) => d.node_id === nodeId);
+    if (node.empty()) {
+      return;
+    }
+
+    node.classed('auth-pulse', true);
+
+    const timeoutId = setTimeout(() => {
+      node.classed('auth-pulse', false);
+      this.attackTimeouts.delete('auth-' + nodeId);
+    }, 800);
+
+    this.attackTimeouts.set('auth-' + nodeId, timeoutId);
   }
 }
 
