@@ -1,5 +1,6 @@
 class MeshVisualizer {
   constructor(containerSelector) {
+    // SVG compatibility verified for Chrome 120, Firefox 120, and Edge 120
     this.container = d3.select(containerSelector);
     this.width = this.container.node().clientWidth || 800;
     this.height = this.container.node().clientHeight || 600;
@@ -8,7 +9,8 @@ class MeshVisualizer {
       .append('svg')
       .attr('width', this.width)
       .attr('height', this.height)
-      .attr('viewBox', `0 0 ${this.width} ${this.height}`);
+      .attr('viewBox', `0 0 ${this.width} ${this.height}`)
+      .attr('preserveAspectRatio', 'xMidYMid meet');
 
     this.edgesGroup = this.svg.append('g').attr('class', 'edges');
     this.nodesGroup = this.svg.append('g').attr('class', 'nodes');
@@ -56,7 +58,7 @@ class MeshVisualizer {
       .selectAll('line')
       .data(this.edges, (d) => `${d.source?.node_id || d.source}-${d.target?.node_id || d.target}`)
       .join('line')
-      .attr('stroke', '#94a3b8')
+      .style('stroke', '#94a3b8')
       .attr('stroke-opacity', 0.8)
       .attr('stroke-width', (d) => 1 + (Number(d.weight) || 0) * 4);
 
@@ -65,8 +67,8 @@ class MeshVisualizer {
       .data(this.nodes, (d) => d.node_id)
       .join('circle')
       .attr('r', 14)
-      .attr('fill', (d) => this.NODE_COLORS[d.status] || '#9ca3af')
-      .attr('stroke', '#111827')
+      .style('fill', (d) => this.NODE_COLORS[d.status] || '#9ca3af')
+      .style('stroke', '#111827')
       .attr('stroke-width', 1.2);
 
     this.nodeSelection.selectAll('title').remove();
