@@ -1,0 +1,119 @@
+<!-- All JavaScript in this project is plain JavaScript; TypeScript is explicitly prohibited by SRS Section 7.3. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DQRMAN Mesh Dashboard</title>
+  <link rel="stylesheet" href="/vendor/leaflet.min.css">
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f4f7fb;
+      color: #1f2937;
+    }
+
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid #d1d5db;
+      background: #ffffff;
+    }
+
+    #title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-right: auto;
+    }
+
+    #stats {
+      display: flex;
+      gap: 12px;
+      font-size: 14px;
+    }
+
+    #main {
+      display: flex;
+      flex-direction: row;
+      min-height: 70vh;
+    }
+
+    #mesh-container,
+    #map-container {
+      width: 70%;
+      min-height: 70vh;
+      border-right: 1px solid #d1d5db;
+      background: #ffffff;
+    }
+
+    #map-container {
+      display: none;
+    }
+
+    #event-feed {
+      width: 30%;
+      min-height: 70vh;
+      background: #ffffff;
+      overflow: auto;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 12px 16px;
+      border-top: 1px solid #d1d5db;
+      background: #ffffff;
+    }
+
+    button,
+    select {
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="title">DQRMAN Mesh Dashboard</div>
+    <button id="btn-view" type="button">Toggle View</button>
+    <div id="stats">
+      <span id="active-count">Active: 0</span>
+      <span id="destroyed-count">Destroyed: 0</span>
+      <span id="operational-status">Operational: unknown</span>
+      <span id="connection-status">Connection: disconnected</span>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="mesh-container"></div>
+    <div id="map-container"></div>
+    <div id="event-feed"></div>
+  </div>
+
+  <div id="controls">
+    <select id="node-select">
+      <option value="">Select node</option>
+    </select>
+    <button id="btn-destroy" type="button">Destroy Node</button>
+    <button id="btn-replay" type="button">Inject Replay</button>
+    <button id="btn-spoof" type="button">Inject Spoof</button>
+  </div>
+
+  <script src="/vendor/d3.min.js"></script>
+  <script src="/vendor/react.production.min.js"></script>
+  <script src="/vendor/react-dom.production.min.js"></script>
+  <script src="/vendor/leaflet.min.js"></script>
+  <script src="/mesh.js"></script>
+  <script src="/map.js"></script>
+  <script src="/socket.js"></script>
+  <script>
+    window.DQRMAN = window.DQRMAN || {};
+  </script>
+</body>
+</html>
