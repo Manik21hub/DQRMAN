@@ -31,10 +31,65 @@ pending_events = []
 flush_timer = None
 mesh = None
 ALLOWED_ATTACK_TYPES = {'replay', 'spoof', 'jamming'}
-LOG_FILE_PATH = pathlib.Path(os.getenv('DQRMAN_LOG_FILE', 'logs/events.log'))
+APP_CONFIG = {'log_file': os.getenv('DQRMAN_LOG_FILE', 'logs/events.log')}
+LOG_FILE_PATH = pathlib.Path(APP_CONFIG['log_file'])
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / 'frontend'
 FRONTEND_VENDOR_DIR = FRONTEND_DIR / 'vendor'
 TILES_CACHE_DIR = FRONTEND_VENDOR_DIR / 'tiles'
+log_write_lock = threading.Lock()
+
+
+class JSONFormatter(logging.Formatter):
+	"""Structured JSON formatter for file-based event logging."""
+
+	def format(self, record):
+		timestamp = datetime.datetime.utcfromtimestamp(record.created).isoformat() + 'Z'
+		payload = {
+			'level': record.levelname,
+			'timestamp': timestamp,
+			'module': record.module,
+			'message': record.getMessage(),
+		}
+
+		if hasattr(record, 'event_type'):
+			payload['event_type'] = record.event_type
+		if hasattr(record, 'node_ids'):
+			payload['node_ids'] = record.node_ids
+		if hasattr(record, 'outcome'):
+			payload['outcome'] = record.outcome
+
+		return json.dumps(payload)
+
+
+def _load_config():
+	"""Load runtime config from config.yaml when available."""
+	config_path = pathlib.Path(__file__).resolve().parent.parent / 'config.yaml'
+	if not config_path.exists():
+		return {}
+
+	try:
+		with config_path.open('r', encoding='utf-8') as handle:
+			loaded = yaml.safe_load(handle) or {}
+			if isinstance(loaded, dict):
+				return loaded
+	except Exception:
+		return {}
+
+	return {}
+
+
+def log_event(event_type, payload):
+	"""Write a structured event as one JSON line to the event log file."""
+	event_payload = {
+		'event_type': event_type,
+		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+	}
+	event_payload.update(payload or {})
+
+	with log_write_lock:
+		LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+		with LOG_FILE_PATH.open('a', encoding='utf-8') as handle:
+			handle.write(json.dumps(event_payload) + '\n')
 
 
 def _current_mesh_state():
@@ -316,14 +371,32 @@ def _init_mesh(node_count):
 def _configure_logging(level_name):
 	"""Configure root logging level from CLI option."""
 	level = getattr(logging, str(level_name).upper(), logging.INFO)
-	logging.basicConfig(
-		level=level,
-		format='%(asctime)s %(levelname)s %(name)s: %(message)s',
-	)
+	root_logger = logging.getLogger()
+	root_logger.setLevel(level)
+
+	for handler in list(root_logger.handlers):
+		root_logger.removeHandler(handler)
+
+	stream_handler = logging.StreamHandler()
+	stream_handler.setLevel(level)
+	stream_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+	root_logger.addHandler(stream_handler)
+
+	LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+	file_handler = logging.FileHandler(LOG_FILE_PATH, mode='a', encoding='utf-8')
+	file_handler.setLevel(level)
+	file_handler.setFormatter(JSONFormatter())
+	root_logger.addHandler(file_handler)
 
 
 def main():
 	"""CLI entry point for running the Flask-SocketIO server."""
+	global LOG_FILE_PATH
+	loaded_config = _load_config()
+	if isinstance(loaded_config, dict):
+		APP_CONFIG.update(loaded_config)
+	LOG_FILE_PATH = pathlib.Path(APP_CONFIG.get('log_file', 'logs/events.log'))
+
 	parser = argparse.ArgumentParser(description='Run DQRMAN phase-1 server')
 	parser.add_argument('--port', type=int, default=8080)
 	parser.add_argument('--nodes', type=int, default=10)
