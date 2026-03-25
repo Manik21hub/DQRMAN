@@ -114,6 +114,127 @@
   <script src="/socket.js"></script>
   <script>
     window.DQRMAN = window.DQRMAN || {};
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const mesh = new MeshVisualizer('mesh-container');
+      const map = new MeshMap('map-container');
+      const socket = new MeshSocket(
+        `ws://${window.location.host}/socket.io/?transport=websocket`,
+        {
+          onMessage: onMsg,
+          onConnect: onConnect,
+          onDisconnect: onDisconnect
+        }
+      );
+
+      let currentNodes = [];
+      let currentEdges = [];
+
+      function onMsg(data) {
+        if (data.nodes && data.edges) {
+          currentNodes = data.nodes;
+          currentEdges = data.edges;
+
+          // Update D3 visualization
+          mesh.setData(data.nodes, data.edges);
+          mesh.update();
+
+          // Update Leaflet map
+          map.setData(data.nodes, data.edges);
+
+          // Update stats
+          const activeCount = (data.nodes || []).filter(n => n.status === 'ACTIVE').length;
+          const destroyedCount = (data.nodes || []).filter(n => n.status === 'DESTROYED').length;
+          document.getElementById('active-count').textContent = `Active: ${activeCount}`;
+          document.getElementById('destroyed-count').textContent = `Destroyed: ${destroyedCount}`;
+          if (data.operational !== undefined) {
+            document.getElementById('operational-status').textContent = `Operational: ${data.operational ? 'yes' : 'no'}`;
+          }
+        }
+
+        if (data.events && Array.isArray(data.events)) {
+          data.events.forEach(event => {
+            const feedDiv = document.getElementById('event-feed');
+            const eventLine = document.createElement('div');
+            eventLine.style.padding = '6px';
+            eventLine.style.borderBottom = '1px solid #e5e7eb';
+            eventLine.style.fontSize = '12px';
+
+            const timestamp = event.timestamp || new Date().toISOString();
+            eventLine.textContent = `[${timestamp}] ${event.event_type}: ${JSON.stringify(event)}`;
+            feedDiv.appendChild(eventLine);
+            feedDiv.scrollTop = feedDiv.scrollHeight;
+
+            // Handle NODE_FAILED events: find affected edges and animate self-healing
+            if (event.event_type === 'NODE_FAILED' && event.destroyed_node_id) {
+              const destroyedNodeId = event.destroyed_node_id;
+              const oldEdgeKeys = [];
+
+              // Find all edges connected to the destroyed node
+              Object.keys(map._edges).forEach(key => {
+                const [source, target] = key.split('--');
+                if (source === destroyedNodeId || target === destroyedNodeId) {
+                  oldEdgeKeys.push(key);
+                }
+              });
+
+              // Build node position lookup
+              const nodeLatLonMap = {};
+              (currentNodes || []).forEach(node => {
+                if (node.lat && node.lon) {
+                  nodeLatLonMap[node.id] = { lat: node.lat, lon: node.lon };
+                }
+              });
+
+              // Extract new edges from event if available
+              const newEdges = event.new_edges || [];
+
+              // Trigger self-healing animation on map
+              if (oldEdgeKeys.length > 0 || newEdges.length > 0) {
+                map.showSelfHeal(destroyedNodeId, oldEdgeKeys, newEdges, nodeLatLonMap);
+              }
+            }
+
+            // Handle attack events: animate on both D3 and Leaflet map
+            if (event.event_type === 'REPLAY_DETECTED' && event.node_id) {
+              mesh.showAttack(event.node_id, 'replay');
+              map.showAttack(event.node_id, 'replay');
+            }
+            if (event.event_type === 'SPOOFING_ATTEMPT' && event.node_id) {
+              mesh.showAttack(event.node_id, 'spoof');
+              map.showAttack(event.node_id, 'spoof');
+            }
+          });
+        }
+      }
+
+      function onConnect() {
+        document.getElementById('connection-status').textContent = 'Connection: connected';
+      }
+
+      function onDisconnect() {
+        document.getElementById('connection-status').textContent = 'Connection: reconnecting';
+      }
+
+      function toggleView() {
+        const meshContainer = document.getElementById('mesh-container');
+        const mapContainer = document.getElementById('map-container');
+
+        if (meshContainer.style.display === 'none') {
+          meshContainer.style.display = 'block';
+          mapContainer.style.display = 'none';
+        } else {
+          meshContainer.style.display = 'none';
+          mapContainer.style.display = 'block';
+          map.map.invalidateSize();
+        }
+      }
+
+      document.getElementById('btn-view').addEventListener('click', toggleView);
+
+      // Initialize WebSocket connection
+      socket.connect();
+    });
   </script>
 </body>
 </html>
