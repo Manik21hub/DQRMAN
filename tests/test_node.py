@@ -6,11 +6,12 @@ Tests the Node class, AuthProtocol, and NonceCache implementations.
 import pytest
 import time
 import os
+import logging
 import struct
 import json
 import socket
 import backend.node as node_mod
-from backend.node import Node, AuthProtocol, NonceCache, NodeState, AnomalyLogger, HeartbeatReceiver, heartbeat_sender
+from backend.node import Node, AuthProtocol, NonceCache, NodeState, AnomalyLogger, HeartbeatReceiver, heartbeat_sender, log_auth_event
 
 
 @pytest.fixture
@@ -638,3 +639,36 @@ def test_duplicate_node_id_rejected():
     graph.add_node(node_id, public_key_1)
     with pytest.raises(ValueError):
         graph.add_node(node_id, public_key_2)
+
+
+def test_log_entry_has_fr20_fields(tmp_path):
+    node_a = Node()
+    node_b = Node()
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
+
+    log_file = tmp_path / 'auth_events.log'
+    handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(message)s'))
+
+    target_logger = node_mod.logger
+    original_level = target_logger.level
+    target_logger.setLevel(logging.INFO)
+    target_logger.addHandler(handler)
+
+    try:
+        result = AuthProtocol().authenticate(node_a, node_b)
+        log_auth_event(result)
+        handler.flush()
+    finally:
+        target_logger.removeHandler(handler)
+        target_logger.setLevel(original_level)
+        handler.close()
+
+    last_line = log_file.read_text(encoding='utf-8').strip().splitlines()[-1]
+    entry = json.loads(last_line)
+
+    assert 'event_type' in entry
+    assert 'timestamp' in entry
+    assert ('node_a_id' in entry) or ('node_b_id' in entry)
+    assert 'outcome' in entry

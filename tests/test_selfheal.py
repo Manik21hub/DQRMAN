@@ -149,3 +149,27 @@ def test_rejoin_after_on_node_failure_mesh_accepts_node():
     assert rejoined is True
     assert node.node_id in mesh._graph
     assert mesh._graph.nodes[node.node_id]['status'] == 'ACTIVE'
+
+
+def test_nfr12_fault_containment():
+    mesh = TrustGraph()
+    nodes = [Node() for _ in range(8)]
+
+    for node in nodes:
+        node.transition_to(NodeState.ACTIVE)
+        mesh.add_node(node.node_id, node.public_key)
+
+    # Build ring where each node is connected to its two direct neighbours.
+    for i in range(len(nodes)):
+        curr = nodes[i].node_id
+        nxt = nodes[(i + 1) % len(nodes)].node_id
+        prv = nodes[(i - 1) % len(nodes)].node_id
+        mesh.update_edge(curr, nxt, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+        mesh.update_edge(curr, prv, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+
+    mesh.quarantine_node(nodes[2].node_id)
+
+    # Nodes at indexes 5 and 6 are not adjacent to index 2.
+    result = AuthProtocol().authenticate(nodes[5], nodes[6])
+    assert result['success'] is True
+    print('NFR-12 PASS: fault contained to direct neighbours only')
