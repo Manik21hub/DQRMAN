@@ -129,6 +129,108 @@
 
       let currentNodes = [];
       let currentEdges = [];
+      let mapViewedOnce = false;
+
+      function updateStats() {
+        const activeCount = (currentNodes || []).filter(n => n.status === 'ACTIVE').length;
+        const destroyedCount = (currentNodes || []).filter(n => n.status === 'DESTROYED').length;
+        const isOperational = currentNodes.length > 0 && (activeCount / currentNodes.length) >= 0.2;
+
+        document.getElementById('active-count').textContent = `Active: ${activeCount}`;
+        document.getElementById('destroyed-count').textContent = `Destroyed: ${destroyedCount}`;
+
+        const opSpan = document.getElementById('operational-status');
+        if (isOperational) {
+          opSpan.textContent = 'Operational: YES';
+          opSpan.style.color = '#22c55e';
+          opSpan.style.fontWeight = 'normal';
+        } else {
+          opSpan.textContent = 'Operational: NO';
+          opSpan.style.color = '#ef4444';
+          opSpan.style.fontWeight = 'bold';
+        }
+      }
+
+      function populateNodeSelect() {
+        const select = document.getElementById('node-select');
+        const activeNodes = (currentNodes || []).filter(n => n.status === 'ACTIVE');
+
+        // Preserve current selection if it's still valid
+        const currentSelection = select.value;
+
+        // Clear and rebuild options
+        select.innerHTML = '<option value="">Select node</option>';
+        activeNodes.forEach(node => {
+          const option = document.createElement('option');
+          option.value = node.id;
+          option.textContent = `${node.id.substring(0, 16)}... (${node.status})`;
+          select.appendChild(option);
+        });
+
+        // Restore selection if still valid
+        if (currentSelection && activeNodes.find(n => n.id === currentSelection)) {
+          select.value = currentSelection;
+        }
+      }
+
+      function requestLiveLocation() {
+        if (!navigator.geolocation) {
+          console.warn('Geolocation not available; using fallback coordinates');
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            map.centerOnLocation(lat, lon, 15);
+
+            // Send location to server
+            fetch('/api/v1/location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ latitude: lat, longitude: lon })
+            }).catch(err => console.error('Location POST failed:', err));
+          },
+          (error) => {
+            console.warn('Geolocation failed:', error.message, '; using fallback coordinates');
+            // Use fallback coordinates from config (28.6139, 77.2090)
+            const fallbackLat = 28.6139;
+            const fallbackLon = 77.2090;
+            map.centerOnLocation(fallbackLat, fallbackLon, 15);
+          }
+        );
+      }
+
+      async function makeRequest(method, url, body = null, targetButton = null) {
+        const originalText = targetButton ? targetButton.textContent : '';
+        const originalDisabled = targetButton ? targetButton.disabled : false;
+
+        if (targetButton) {
+          targetButton.disabled = true;
+          targetButton.textContent = '...';
+        }
+
+        try {
+          const options = {
+            method,
+            headers: { 'Content-Type': 'application/json' }
+          };
+          if (body) options.body = JSON.stringify(body);
+
+          const response = await fetch(url, options);
+          if (!response.ok) {
+            console.error(`Request failed: ${response.status}`);
+          }
+        } catch (err) {
+          console.error('Request error:', err);
+        } finally {
+          if (targetButton) {
+            targetButton.disabled = originalDisabled;
+            targetButton.textContent = originalText;
+          }
+        }
+      }
 
       function onMsg(data) {
         if (data.nodes && data.edges) {
@@ -142,14 +244,9 @@
           // Update Leaflet map
           map.setData(data.nodes, data.edges);
 
-          // Update stats
-          const activeCount = (data.nodes || []).filter(n => n.status === 'ACTIVE').length;
-          const destroyedCount = (data.nodes || []).filter(n => n.status === 'DESTROYED').length;
-          document.getElementById('active-count').textContent = `Active: ${activeCount}`;
-          document.getElementById('destroyed-count').textContent = `Destroyed: ${destroyedCount}`;
-          if (data.operational !== undefined) {
-            document.getElementById('operational-status').textContent = `Operational: ${data.operational ? 'yes' : 'no'}`;
-          }
+          // Update stats and dropdown
+          updateStats();
+          populateNodeSelect();
         }
 
         if (data.events && Array.isArray(data.events)) {
@@ -227,10 +324,46 @@
           meshContainer.style.display = 'none';
           mapContainer.style.display = 'block';
           map.map.invalidateSize();
+
+          // Request live location the first time we switch to map view
+          if (!mapViewedOnce) {
+            mapViewedOnce = true;
+            requestLiveLocation();
+          }
         }
       }
 
       document.getElementById('btn-view').addEventListener('click', toggleView);
+
+      document.getElementById('btn-destroy').addEventListener('click', async () => {
+        const selectedId = document.getElementById('node-select').value;
+        if (!selectedId) {
+          alert('Please select a node');
+          return;
+        }
+        const button = document.getElementById('btn-destroy');
+        await makeRequest('DELETE', `/api/v1/nodes/${selectedId}`, null, button);
+      });
+
+      document.getElementById('btn-replay').addEventListener('click', async () => {
+        const selectedId = document.getElementById('node-select').value;
+        if (!selectedId) {
+          alert('Please select a node');
+          return;
+        }
+        const button = document.getElementById('btn-replay');
+        await makeRequest('POST', '/api/v1/attack', { type: 'replay', node_id: selectedId }, button);
+      });
+
+      document.getElementById('btn-spoof').addEventListener('click', async () => {
+        const selectedId = document.getElementById('node-select').value;
+        if (!selectedId) {
+          alert('Please select a node');
+          return;
+        }
+        const button = document.getElementById('btn-spoof');
+        await makeRequest('POST', '/api/v1/attack', { type: 'spoof', node_id: selectedId }, button);
+      });
 
       // Initialize WebSocket connection
       socket.connect();
