@@ -1,5 +1,7 @@
 import eventlet
 eventlet.monkey_patch()
+from pathlib import Path
+Path('logs').mkdir(parents=True, exist_ok=True)
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
@@ -26,9 +28,6 @@ EVENT_MESH_HEALED = 'EVENT_MESH_HEALED'
 EVENT_ANOMALY_ALERT = 'EVENT_ANOMALY_ALERT'
 EVENT_MESH_DEGRADED = 'EVENT_MESH_DEGRADED'
 EVENT_LOCATION_UPDATED = 'EVENT_LOCATION_UPDATED'
-
-# Ensure log directory exists before configuring any file handlers.
-pathlib.Path('logs').mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 CORS(app)
@@ -101,6 +100,17 @@ def log_event(event_type, payload):
 		LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
 		with LOG_FILE_PATH.open('a', encoding='utf-8') as handle:
 			handle.write(json.dumps(event_payload) + '\n')
+
+
+def _write_startup_log_entry():
+	"""Write append-only JSON startup entry to the configured log file."""
+	entry = {
+		'event_type': 'SERVER_START',
+		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+	}
+	LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+	with LOG_FILE_PATH.open('a', encoding='utf-8') as handle:
+		handle.write(json.dumps(entry) + '\n')
 
 
 def _current_mesh_state():
@@ -407,6 +417,7 @@ def main():
 	if isinstance(loaded_config, dict):
 		APP_CONFIG.update(loaded_config)
 	LOG_FILE_PATH = pathlib.Path(APP_CONFIG.get('log_file', 'logs/events.log'))
+	_write_startup_log_entry()
 
 	parser = argparse.ArgumentParser(description='Run DQRMAN phase-1 server')
 	parser.add_argument('--port', type=int, default=8080)
@@ -418,7 +429,7 @@ def main():
 	_configure_logging(args.log_level)
 	_init_mesh(args.nodes)
 
-	if args.kill:
+	if args.kill_node_id:
 		if args.kill_node_id in mesh._graph:
 			mesh.on_node_failure(args.kill_node_id)
 			logger.info('Destroyed node via --kill: %s', args.kill_node_id)
