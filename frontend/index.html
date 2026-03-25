@@ -283,10 +283,33 @@
             eventLine.style.borderBottom = '1px solid #e5e7eb';
             eventLine.style.fontSize = '12px';
 
-            const timestamp = event.timestamp || new Date().toISOString();
-            eventLine.textContent = `[${timestamp}] ${event.event_type}: ${JSON.stringify(event)}`;
-            feedDiv.appendChild(eventLine);
-            feedDiv.scrollTop = feedDiv.scrollHeight;
+            let cleanTime = '';
+            if (event.timestamp) {
+              const timestampMs = typeof event.timestamp === 'string' 
+                ? new Date(event.timestamp).getTime() 
+                : event.timestamp * 1000;
+              cleanTime = new Date(timestampMs).toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              });
+            } else {
+              cleanTime = new Date().toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              });
+            }
+
+            eventLine.textContent = `[${cleanTime}] ${event.event_type}: ${JSON.stringify(event)}`;
+            feedDiv.insertBefore(eventLine, feedDiv.firstChild);
+
+            // Remove old events if feed exceeds 200 children
+            while (feedDiv.children.length > 200) {
+              feedDiv.removeChild(feedDiv.lastChild);
+            }
 
             // Handle NODE_FAILED events: find affected edges and animate self-healing
             if (event.event_type === 'NODE_FAILED' && event.destroyed_node_id) {
