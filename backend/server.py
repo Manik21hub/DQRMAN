@@ -217,13 +217,42 @@ def _flush():
 
 @app.get('/api/v1/nodes')
 def list_nodes():
-	"""Return all mesh nodes with lifecycle and location metadata."""
+	"""GET /api/v1/nodes.
+
+	Accepts JSON:
+		None (request body is ignored).
+
+	Returns JSON:
+		Array of node objects with fields:
+		- node_id
+		- status
+		- trust_score
+		- lat
+		- lon
+		- joined_at
+
+	Implements:
+		FR-01/FR-02 operational topology visibility for mesh participants.
+	"""
 	return jsonify(_serialize_nodes())
 
 
 @app.get('/health')
 def health():
-	"""Return service health metadata."""
+	"""GET /health.
+
+	Accepts JSON:
+		None (request body is ignored).
+
+	Returns JSON:
+		Object with:
+		- status
+		- timestamp
+		- version
+
+	Implements:
+		NFR-01 service health observability endpoint.
+	"""
 	return jsonify(
 		{
 			'status': 'ok',
@@ -235,19 +264,50 @@ def health():
 
 @app.get('/')
 def serve_index():
-	"""Serve frontend index page."""
+	"""GET /.
+
+	Accepts JSON:
+		None.
+
+	Returns JSON:
+		None. Returns frontend HTML document (index page).
+
+	Implements:
+		UI-01 web dashboard bootstrap delivery.
+	"""
 	return send_from_directory(FRONTEND_DIR, 'index.html')
 
 
 @app.get('/vendor/<path:filename>')
 def serve_vendor(filename):
-	"""Serve static assets from frontend/vendor directory."""
+	"""GET /vendor/<filename>.
+
+	Accepts JSON:
+		None.
+
+	Returns JSON:
+		None. Returns requested static vendor asset bytes.
+
+	Implements:
+		UI-02 static asset distribution for frontend dependencies.
+	"""
 	return send_from_directory(FRONTEND_VENDOR_DIR, filename)
 
 
 @app.get('/osm-tiles/<int:z>/<int:x>/<int:y>.png')
 def serve_osm_tile(z, x, y):
-	"""Serve OSM tile from local cache or proxy and cache it."""
+	"""GET /osm-tiles/<z>/<x>/<y>.png.
+
+	Accepts JSON:
+		None.
+
+	Returns JSON:
+		On success: None (returns PNG tile bytes).
+		On failure: {'error': 'TILE_FETCH_FAILED'} with HTTP 502.
+
+	Implements:
+		NFR-04 map tile caching and external map proxy resilience.
+	"""
 	tile_dir = TILES_CACHE_DIR / str(z) / str(x)
 	tile_name = f'{y}.png'
 	cached_tile = tile_dir / tile_name
@@ -273,7 +333,18 @@ def serve_osm_tile(z, x, y):
 
 @app.get('/api/v1/events')
 def list_events():
-	"""Return last 100 JSON log lines sorted newest first."""
+	"""GET /api/v1/events.
+
+	Accepts JSON:
+		None (request body is ignored).
+
+	Returns JSON:
+		Array of parsed event objects from the most recent 100 log lines,
+		sorted newest first. Non-JSON lines are skipped.
+
+	Implements:
+		FR-10 security and operational event audit retrieval.
+	"""
 	if not LOG_FILE_PATH.exists():
 		return jsonify([])
 
@@ -296,7 +367,22 @@ def list_events():
 
 @app.post('/api/v1/attack')
 def post_attack():
-	"""Register an attack simulation request."""
+	"""POST /api/v1/attack.
+
+	Accepts JSON:
+		{
+			'attack_type': 'replay' | 'spoof' | 'jamming',
+			'target_node_id': <string>,
+			'delay_seconds': <number>
+		}
+
+	Returns JSON:
+		On success: {'success': true, 'attack': {...}}.
+		On validation failure: {'error': 'UNKNOWN_ATTACK_TYPE'} with HTTP 400.
+
+	Implements:
+		FR-16 adversarial simulation trigger endpoint.
+	"""
 	data = request.get_json(silent=True) or {}
 	attack_type = data.get('attack_type')
 	target_node_id = data.get('target_node_id')
@@ -320,7 +406,23 @@ def post_attack():
 
 @app.post('/api/v1/location')
 def post_location():
-	"""Scatter mesh nodes around provided coordinates and emit updates."""
+	"""POST /api/v1/location.
+
+	Accepts JSON:
+		{
+			'lat': <number>,
+			'lon': <number>,
+			'accuracy': <number, optional>
+		}
+
+	Returns JSON:
+		On success: {'success': true, 'node_count': <int>}.
+		If mesh unavailable: {'error': 'MESH_NOT_INITIALIZED'} with HTTP 503.
+		If coordinates missing: {'error': 'MISSING_COORDINATES'} with HTTP 400.
+
+	Implements:
+		FR-15 geographic node position update and broadcast.
+	"""
 	if mesh is None:
 		return jsonify({'error': 'MESH_NOT_INITIALIZED'}), 503
 
@@ -371,7 +473,24 @@ def post_location():
 
 @app.delete('/api/v1/nodes/<node_id>')
 def delete_node(node_id):
-	"""Mark node as destroyed, emit event, and report survivability."""
+	"""DELETE /api/v1/nodes/<node_id>.
+
+	Accepts JSON:
+		None (path parameter supplies node_id).
+
+	Returns JSON:
+		On success:
+		{
+			'success': true,
+			'surviving_count': <int>,
+			'operational': <bool>
+		}
+		If mesh unavailable: {'error': 'MESH_NOT_INITIALIZED'} with HTTP 503.
+		If node missing: {'error': 'NODE_NOT_FOUND'} with HTTP 404.
+
+	Implements:
+		FR-17 node destruction trigger and FR-11 self-healing activation.
+	"""
 	if mesh is None:
 		return jsonify({'error': 'MESH_NOT_INITIALIZED'}), 503
 
