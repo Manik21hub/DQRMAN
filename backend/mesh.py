@@ -19,6 +19,17 @@ import random
 logger = logging.getLogger(__name__)
 
 
+def _config_value(config, key, default=None, section=None):
+    """Read config value from flat key or optional nested section."""
+    if not isinstance(config, dict):
+        return default
+    if key in config:
+        return config.get(key, default)
+    if section and isinstance(config.get(section), dict):
+        return config[section].get(key, default)
+    return default
+
+
 def _compute_proximity_score(lat1, lon1, lat2, lon2):
     """Compute proximity score based on geographic distance.
 
@@ -74,7 +85,7 @@ def _compute_edge_weight(auth_rate, proximity_score, recency):
 class TrustGraph:
     """Distributed trust graph tracking node relationships and reachability."""
 
-    def __init__(self):
+    def __init__(self, config=None):
         """Initialize a new trust graph.
 
         Args:
@@ -86,6 +97,7 @@ class TrustGraph:
         Raises:
             None.
         """
+        self._config = config or {}
         self._graph = nx.DiGraph()
         self._trust_table = {}
         self._path_cache = {}
@@ -373,7 +385,13 @@ class TrustGraph:
                 path = nx.dijkstra_path(self._graph, source, target, weight=weight_fn)
                 elapsed_ms = (time.time() - start_time) * 1000
 
-                if elapsed_ms > 100:
+                trust_path_timeout = _config_value(
+                    self._config,
+                    'trust_path_timeout',
+                    100,
+                    section='network',
+                )
+                if elapsed_ms > trust_path_timeout:
                     logger.warning(
                         f'compute_trust_path {source[:8]} to {target[:8]} took {elapsed_ms:.1f}ms'
                     )
@@ -513,7 +531,13 @@ class TrustGraph:
             active_count = len(active_nodes)
             availability = active_count / self._original_node_count
 
-            if availability < 0.20:
+            survivability_threshold = _config_value(
+                self._config,
+                'survivability_threshold',
+                0.2,
+                section='network',
+            )
+            if availability < survivability_threshold:
                 logger.critical(
                     f'Mesh degraded: {active_count}/{self._original_node_count} '
                     f'nodes active ({availability*100:.1f}%)'

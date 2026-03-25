@@ -519,7 +519,7 @@ def delete_node(node_id):
 def _init_mesh(node_count):
 	"""Initialize in-memory mesh with placeholder nodes for phase-1 server runtime."""
 	global mesh
-	mesh = TrustGraph()
+	mesh = TrustGraph(config=APP_CONFIG)
 
 	for index in range(node_count):
 		node_id = f'node-{index + 1:03d}'

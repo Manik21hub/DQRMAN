@@ -23,6 +23,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _config_value(config, key, default=None, section=None):
+    """Read config value from flat key or optional nested section."""
+    if not isinstance(config, dict):
+        return default
+    if key in config:
+        return config.get(key, default)
+    if section and isinstance(config.get(section), dict):
+        return config[section].get(key, default)
+    return default
+
+
 def _build_auth_message(nonce, timestamp, extra=b''):
     """Build an authentication message from nonce, timestamp, and optional extra data.
     
@@ -162,7 +173,7 @@ class NonceCache:
 class AnomalyLogger:
     """Tracks recent authentication failures and quarantines anomalous nodes."""
 
-    def __init__(self, node, threshold=5, window_seconds=30, mesh=None):
+    def __init__(self, node, threshold=None, window_seconds=None, mesh=None):
         """Initialize anomaly tracking state for a monitored node.
 
         Args:
@@ -178,6 +189,11 @@ class AnomalyLogger:
             None.
         """
         self.node = node
+        cfg = getattr(node, '_config', {})
+        if threshold is None:
+            threshold = _config_value(cfg, 'anomaly_threshold', 5, section='security')
+        if window_seconds is None:
+            window_seconds = _config_value(cfg, 'anomaly_window', 30, section='security')
         self.threshold = threshold
         self.window_seconds = window_seconds
         self.mesh = mesh
@@ -307,7 +323,7 @@ class AuthProtocol:
         response_signature = node_b.crypto.sign(node_b._private_key, response_message)
         
         # Steps 10-11: Verify response
-        time_sync_window = node_a._config.get('time_sync_window', 5.0)
+        time_sync_window = _config_value(node_a._config, 'time_sync_window', 5.0, section='network')
         if abs(time.time() - ts_b) > time_sync_window:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             result = {
@@ -380,7 +396,7 @@ class Node:
         if config is None:
             config = {}
         
-        algorithm = config.get('dilithium_variant', 'ML-DSA-65')
+        algorithm = _config_value(config, 'dilithium_variant', 'ML-DSA-65', section='crypto')
         crypto = CryptoModule(algorithm=algorithm)
         
         self.public_key, self._private_key = crypto.generate_keypair()
@@ -394,7 +410,7 @@ class Node:
         self.nonce_cache = NonceCache()
         
         # Initialize TCP server
-        self.port = config.get('port', 9000)
+        self.port = _config_value(config, 'port', 9000, section='server')
         self.tcp_server = NodeTCPServer('0.0.0.0', self.port)
         self.tcp_server.start()
         
@@ -562,7 +578,7 @@ class Node:
         
         # Step 2: Check timestamp freshness
         now = time.time()
-        time_sync_window = self._config.get('time_sync_window', 5.0)
+        time_sync_window = _config_value(self._config, 'time_sync_window', 5.0, section='network')
         if abs(now - challenge['timestamp']) > time_sync_window:
             return (False, 'TIMESTAMP_EXPIRED')
         
@@ -677,7 +693,7 @@ class Node:
             logger.warning(f'Failed to send message to {host}:{port}: {e}')
 
 
-def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
+def heartbeat_sender(node, neighbours, stop_event, interval=None):
     """Send periodic heartbeat messages to mesh neighbours.
 
     Runs a background loop that sends signed heartbeat packets to all
@@ -689,7 +705,8 @@ def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
         node: Node instance with crypto capability and private key.
         neighbours: List of (host, port) tuples for destination peers.
         stop_event: threading.Event for clean shutdown signaling.
-        interval: Seconds between heartbeats (default 1.0).
+        interval: Seconds between heartbeats. If None, reads from
+              node config key network.heartbeat_interval with default 1.0.
 
     Returns:
         None.
@@ -697,6 +714,9 @@ def heartbeat_sender(node, neighbours, stop_event, interval=1.0):
     Raises:
         None.
     """
+    if interval is None:
+        interval = _config_value(getattr(node, '_config', {}), 'heartbeat_interval', 1.0, section='network')
+
     # Open UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -853,7 +873,7 @@ class HeartbeatReceiver:
                 self.socket.close()
             logger.info(f'Heartbeat receiver stopped')
 
-    def check_neighbours(self, interval, timeout=1.0):
+    def check_neighbours(self, interval, timeout=None):
         """Check for neighbours with stale heartbeats.
 
         Identifies peer nodes that have not sent heartbeats within the
@@ -862,7 +882,9 @@ class HeartbeatReceiver:
 
         Args:
             interval: Seconds to treat as heartbeat interval.
-            timeout: Multiplier for timeout (default 1.0). Total timeout
+            timeout: Multiplier for timeout. If None, reads from
+                     node config key network.heartbeat_timeout with default 3.
+                     Total timeout
                      is interval * timeout.
 
         Returns:
@@ -871,6 +893,9 @@ class HeartbeatReceiver:
         Raises:
             None.
         """
+        if timeout is None:
+            timeout = _config_value(getattr(self.node, '_config', {}), 'heartbeat_timeout', 3, section='network')
+
         now = time.time()
         threshold = interval * timeout
         stale = []

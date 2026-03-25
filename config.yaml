@@ -10,10 +10,12 @@ network: # Mesh network timing and path settings
   heartbeat_timeout: 3 # Seconds before a node is considered offline
   time_sync_window: 5.0 # Allowed clock drift window in seconds
   trust_path_timeout: 100 # Milliseconds to wait for trust path resolution
+  survivability_threshold: 0.2 # Minimum active/original ratio for mesh operation
 
 security: # Security monitoring thresholds
   anomaly_threshold: 5 # Number of anomalies before triggering alert
   anomaly_window: 30 # Time window in seconds for anomaly counting
+  auth_latency_ms: 200 # Authentication latency budget in milliseconds
 
 server: # API server bind configuration
   host: 0.0.0.0 # Server bind address
