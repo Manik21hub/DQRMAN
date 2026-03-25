@@ -201,6 +201,96 @@ class MeshMap {
     this._updateMarkers(nodes);
     this._updateEdges(nodes, edges);
   }
+
+  /**
+   * Animate self-healing mesh rerouting over 2 seconds.
+   * @param {string} destroyedNodeId - ID of the destroyed node
+   * @param {Array} oldEdgeKeys - Edge keys to remove (e.g., ['nodeA--nodeB'])
+   * @param {Array} newEdges - New edges to add
+   * @param {Object} nodeLatLonMap - Lookup of node positions {nodeId: {lat, lon}}
+   */
+  showSelfHeal(destroyedNodeId, oldEdgeKeys, newEdges, nodeLatLonMap) {
+    // Phase 1 (0ms): Highlight old edges in red
+    oldEdgeKeys.forEach(key => {
+      if (this._edges[key]) {
+        this._edges[key].setStyle({ color: '#ef4444', weight: 3, opacity: 0.9 });
+      }
+    });
+
+    // Phase 2 (400ms): Remove old edges
+    setTimeout(() => {
+      oldEdgeKeys.forEach(key => {
+        if (this._edges[key]) {
+          this.map.removeLayer(this._edges[key]);
+          delete this._edges[key];
+        }
+      });
+    }, 400);
+
+    // Phase 3 (500ms): Draw new routes as dashed orange
+    setTimeout(() => {
+      newEdges.forEach(edge => {
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const edgeKey = `${sourceId}--${targetId}`;
+
+        if (!nodeLatLonMap[sourceId] || !nodeLatLonMap[targetId]) return;
+
+        const latlngs = [
+          [nodeLatLonMap[sourceId].lat, nodeLatLonMap[sourceId].lon],
+          [nodeLatLonMap[targetId].lat, nodeLatLonMap[targetId].lon]
+        ];
+
+        const weight = edge.weight || 0;
+        const polyline = L.polyline(latlngs, {
+          color: '#fb923c',  // orange
+          weight: 1 + weight * 4,
+          opacity: 0.2 + weight * 0.6,
+          dashArray: '8 6'
+        }).addTo(this.map);
+
+        this._edges[edgeKey] = polyline;
+      });
+    }, 500);
+
+    // Phase 4 (1500ms): Replace dashed orange with solid green, slightly thicker
+    setTimeout(() => {
+      newEdges.forEach(edge => {
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const edgeKey = `${sourceId}--${targetId}`;
+
+        if (this._edges[edgeKey]) {
+          const weight = edge.weight || 0;
+          this._edges[edgeKey].setStyle({
+            color: '#22c55e',  // green
+            weight: 2 + weight * 4,  // slightly thicker
+            opacity: 0.7,
+            dashArray: null  // solid
+          });
+        }
+      });
+    }, 1500);
+
+    // Phase 5 (2000ms): Settle to normal blue at standard trust-weighted thickness
+    setTimeout(() => {
+      newEdges.forEach(edge => {
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const edgeKey = `${sourceId}--${targetId}`;
+
+        if (this._edges[edgeKey]) {
+          const weight = edge.weight || 0;
+          this._edges[edgeKey].setStyle({
+            color: '#3b82f6',  // blue
+            weight: 1 + weight * 4,
+            opacity: 0.2 + weight * 0.6,
+            dashArray: null
+          });
+        }
+      });
+    }, 2000);
+  }
 }
 
 window.MeshMap = MeshMap;
