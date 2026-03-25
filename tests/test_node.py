@@ -672,3 +672,42 @@ def test_log_entry_has_fr20_fields(tmp_path):
     assert 'timestamp' in entry
     assert ('node_a_id' in entry) or ('node_b_id' in entry)
     assert 'outcome' in entry
+
+
+def test_log_auth_event_includes_all_required_fields_and_rounding(tmp_path):
+    log_file = tmp_path / 'auth_event_full_fields.log'
+    handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(message)s'))
+
+    target_logger = node_mod.logger
+    original_level = target_logger.level
+    target_logger.setLevel(logging.INFO)
+    target_logger.addHandler(handler)
+
+    result = {
+        'node_a_id': 'a' * 64,
+        'node_b_id': 'b' * 64,
+        'success': False,
+        'failure_reason': 'INVALID_SIGNATURE',
+        'duration_ms': 12.3456,
+    }
+
+    try:
+        log_auth_event(result)
+        handler.flush()
+    finally:
+        target_logger.removeHandler(handler)
+        target_logger.setLevel(original_level)
+        handler.close()
+
+    last_line = log_file.read_text(encoding='utf-8').strip().splitlines()[-1]
+    entry = json.loads(last_line)
+
+    assert entry['event_type'] == 'MUTUAL_AUTH'
+    assert entry['timestamp'].endswith('Z')
+    assert isinstance(entry['timestamp'], str)
+    assert entry['node_a_id'] == result['node_a_id']
+    assert entry['node_b_id'] == result['node_b_id']
+    assert entry['outcome'] == 'FAILURE'
+    assert entry['failure_reason'] == 'INVALID_SIGNATURE'
+    assert entry['duration_ms'] == 12.35
