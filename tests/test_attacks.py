@@ -73,7 +73,7 @@ def test_spoof_attack(nodes, simulator):
         assert result.detection_reason == 'INVALID_SIGNATURE'
 
 
-def test_master_all_attacks(nodes, simulator):
+def test_zero_false_negatives_master(nodes, simulator):
     """(4) Master test: run all three attack types totalling 800 attempts, assert total undetected across all is zero."""
     n1, n2 = nodes
     undetected = 0

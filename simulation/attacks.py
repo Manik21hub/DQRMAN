@@ -105,7 +105,7 @@ class AttackSimulator:
             AttackResult: Result with attack_type='replay_outside_window',
                 detected=True on success, and detection_reason='TIMESTAMP_EXPIRED'.
         """
-        start_time = time.time()
+        t0 = time.perf_counter()
 
         # Step 1: Capture a message
         logger.info(f"Capture: Intercepting challenge from {source_node.node_id[:8]} -> {target_node.node_id[:8]}")
@@ -127,7 +127,7 @@ class AttackSimulator:
         else:
             logger.info(f"Replay detected successfully: {error_reason}")
 
-        duration_ms = (time.time() - start_time) * 1000
+        duration_ms = (time.perf_counter() - t0) * 1000
 
         return AttackResult(
             attack_type="replay_outside_window",
@@ -160,7 +160,7 @@ class AttackSimulator:
             AttackResult: Result with attack_type='replay_within_window',
                 detected=True on correct rejection, detection_reason='DUPLICATE_NONCE'.
         """
-        start_time = time.time()
+        t0 = time.perf_counter()
 
         # Step 1: Capture a message
         logger.info("Capture: Intercepting challenge for bit-identical replay.")
@@ -184,7 +184,7 @@ class AttackSimulator:
         else:
             logger.critical("NFR-09 VIOLATION: Immediate nonce replay was accepted by the target node!")
 
-        duration_ms = (time.time() - start_time) * 1000
+        duration_ms = (time.perf_counter() - t0) * 1000
 
         return AttackResult(
             attack_type="replay_within_window",
@@ -219,7 +219,7 @@ class AttackSimulator:
             AttackResult: Result with attack_type='spoof_attack', detected=True
                 on correct rejection, detection_reason='INVALID_SIGNATURE'.
         """
-        start_time = time.time()
+        t0 = time.perf_counter()
 
         # Step 1: Generate attacker-controlled challenge components
         nonce = self.crypto.generate_nonce()
@@ -251,7 +251,7 @@ class AttackSimulator:
         else:
             logger.info(f"Spoofing detected correctly: {error_reason}")
 
-        duration_ms = (time.time() - start_time) * 1000
+        duration_ms = (time.perf_counter() - t0) * 1000
 
         return AttackResult(
             attack_type="spoof_attack",
@@ -292,7 +292,7 @@ class AttackSimulator:
             AttackResult: Result with attack_type='jamming_simulation',
                 detected=True, detection_reason='JAMMING_WINDOW_EXPIRED'.
         """
-        start_time = time.time()
+        t0 = time.perf_counter()
 
         logger.info(f"Jamming: Starting {duration}s interference at receiver for {target_node.node_id[:8]}")
 
@@ -311,7 +311,7 @@ class AttackSimulator:
 
         logger.info("Jamming: Interference ended and node presence was restored.")
 
-        duration_ms = (time.time() - start_time) * 1000
+        duration_ms = (time.perf_counter() - t0) * 1000
 
         return AttackResult(
             attack_type="jamming_simulation",

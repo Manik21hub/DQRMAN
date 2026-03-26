@@ -6,6 +6,9 @@ To change the algorithm used by the project, update this file only.
 
 import hashlib
 import secrets
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     import oqs
