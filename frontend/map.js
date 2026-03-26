@@ -1,6 +1,9 @@
 class MeshMap {
-  constructor(containerId) {
+  constructor(containerId, config = {}) {
     this.containerId = containerId || 'map-container';
+
+    const fallbackLat = config.centerCoords ? config.centerCoords[0] : 28.6139;
+    const fallbackLon = config.centerCoords ? config.centerCoords[1] : 77.2090;
 
     // Fix Leaflet default icon resolution for vendored static assets.
     delete L.Icon.Default.prototype._getIconUrl;
@@ -9,7 +12,7 @@ class MeshMap {
       shadowUrl: '/vendor/leaflet-images/marker-shadow.png'
     });
 
-    this.map = L.map(this.containerId);
+    this.map = L.map(this.containerId).setView([fallbackLat, fallbackLon], 13);
 
     L.tileLayer('/osm-tiles/{z}/{x}/{y}.png', {
       maxZoom: 19,

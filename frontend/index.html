@@ -144,7 +144,14 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       const mesh = new MeshVisualizer('#mesh-container');
-      const map = new MeshMap('map-container');
+      
+      // TODO: Read fallback coordinates dynamically from config.yaml osm.fallback_lat & osm.fallback_lon
+      // currently hardcoded to New Delhi.
+      const mapConfig = {
+        centerCoords: [28.6139, 77.2090]
+      };
+      const map = new MeshMap('map-container', mapConfig);
+      
       const socket = new MeshSocket(
         window.location.origin,
         {
