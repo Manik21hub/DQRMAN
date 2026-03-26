@@ -237,3 +237,60 @@ def test_quarantine_ring_mesh():
     
     # Path should successfully route through n4
     assert path == [n1_id, n4_id, n3_id]
+
+
+def test_nfr12_in_attack_context():
+    """Build an 8-node ring mesh. Run enough spoof attacks targeting node at index 3
+    to trigger the anomaly threshold and cause quarantine. Then authenticate between
+    nodes at index 6 and 7, which are not adjacent to node 3. Assert the authentication succeeds.
+    """
+    from backend.node import Node, AuthProtocol, AnomalyLogger
+    from backend.mesh import TrustGraph
+    from simulation.attacks import AttackSimulator
+    
+    mesh = TrustGraph()
+    nodes = []
+    
+    # Create 8-node ring mesh (indices 0 to 7)
+    for i in range(8):
+        n = Node(f'node{i}')
+        n.rejoin(mesh, [])
+        nodes.append(n)
+        
+    # Setup bidirectional ring topology trust
+    for i in range(8):
+        n1 = nodes[i]
+        n2 = nodes[(i + 1) % 8]
+        # Trust each other for AuthProtocol
+        n1.trust_table[n2.node_id] = n2.public_key
+        n2.trust_table[n1.node_id] = n1.public_key
+        # Add bidirectional edges to mesh graph
+        mesh.update_edge(n1.node_id, n2.node_id, 1.0)
+        mesh.update_edge(n2.node_id, n1.node_id, 1.0)
+        
+    # Target node is index 3. Attach AnomalyLogger connected to the mesh to trigger full quarantine.
+    target_node = nodes[3]
+    target_node.anomaly_logger = AnomalyLogger(target_node, threshold=5, window_seconds=30, mesh=mesh)
+    
+    simulator = AttackSimulator(mesh)
+    victim_node = nodes[2]
+    
+    # Run 5 spoof attacks
+    for _ in range(5):
+        res = simulator.spoof_attack(victim_node, target_node)
+        assert res.detected is True
+        # Manually record failure to simulate protocol handler behavior
+        target_node.anomaly_logger.record_failure(res.detection_reason)
+        
+    # Verify node 3 is now formally QUARANTINED due to crossing threshold
+    assert target_node.state.name == 'QUARANTINED'
+    
+    # Authenticate between nodes at index 6 and 7, completely non-adjacent to 3
+    n6 = nodes[6]
+    n7 = nodes[7]
+    
+    auth_protocol = AuthProtocol()
+    result = auth_protocol.authenticate(n6, n7)
+    
+    assert result['success'] is True
+    print('NFR-12 PASS: fault contained even in attack scenario')
