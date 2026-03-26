@@ -100,11 +100,11 @@ class MeshMap {
    */
   _updateMarkers(nodes) {
     const nodeStatusColors = {
-      'ACTIVE': '#22c55e',
-      'DESTROYED': '#ef4444',
-      'QUARANTINED': '#f97316',
-      'HEALING': '#3b82f6',
-      'ISOLATED': '#a855f7'
+      'ACTIVE': '#19E3E3',
+      'DESTROYED': '#64748B',
+      'QUARANTINED': '#F97316',
+      'HEALING': '#00BFFF',
+      'ISOLATED': '#8B5CF6'
     };
 
     const nodeIds = new Set();
@@ -175,7 +175,7 @@ class MeshMap {
       ];
 
       const weight = edge.weight || 0;
-      const colour = '#3b82f6';
+      const colour = '#14B8A6';
       const lineWeight = 1 + weight * 4;
       const opacity = 0.2 + weight * 0.6;
 
@@ -225,7 +225,7 @@ class MeshMap {
     // Phase 1 (0ms): Highlight old edges in red
     oldEdgeKeys.forEach(key => {
       if (this._edges[key]) {
-        this._edges[key].setStyle({ color: '#ef4444', weight: 3, opacity: 0.9 });
+        this._edges[key].setStyle({ color: '#EF4444', weight: 3, opacity: 0.9 });
       }
     });
 
@@ -255,7 +255,7 @@ class MeshMap {
 
         const weight = edge.weight || 0;
         const polyline = L.polyline(latlngs, {
-          color: '#fb923c',  // orange
+          color: '#F97316',  // orange
           weight: 1 + weight * 4,
           opacity: 0.2 + weight * 0.6,
           dashArray: '8 6'
@@ -275,7 +275,7 @@ class MeshMap {
         if (this._edges[edgeKey]) {
           const weight = edge.weight || 0;
           this._edges[edgeKey].setStyle({
-            color: '#22c55e',  // green
+            color: '#22C55E',  // green
             weight: 2 + weight * 4,  // slightly thicker
             opacity: 0.7,
             dashArray: null  // solid
@@ -294,7 +294,7 @@ class MeshMap {
         if (this._edges[edgeKey]) {
           const weight = edge.weight || 0;
           this._edges[edgeKey].setStyle({
-            color: '#3b82f6',  // blue
+            color: '#14B8A6',  // blue
             weight: 1 + weight * 4,
             opacity: 0.2 + weight * 0.6,
             dashArray: null

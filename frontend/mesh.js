@@ -16,7 +16,15 @@ class MeshVisualizer {
       .attr('width', this.width)
       .attr('height', this.height)
       .attr('viewBox', `0 0 ${this.width} ${this.height}`)
-      .attr('preserveAspectRatio', 'xMidYMid meet');
+      .attr('preserveAspectRatio', 'xMidYMid meet')
+      .style('background', '#0A0F1C');
+
+    const defs = this.svg.append('defs');
+    const filter = defs.append('filter').attr('id', 'glow');
+    filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
+    const feMerge = filter.append('feMerge');
+    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
     this.edgesGroup = this.svg.append('g').attr('class', 'edges');
     this.nodesGroup = this.svg.append('g').attr('class', 'nodes');
@@ -26,11 +34,12 @@ class MeshVisualizer {
     this.attackTimeouts = new Map();
 
     this.NODE_COLORS = {
-      ACTIVE: '#22c55e',
-      DESTROYED: '#ef4444',
-      QUARANTINED: '#f97316',
-      HEALING: '#3b82f6',
-      ISOLATED: '#a855f7'
+      ACTIVE: '#19E3E3',
+      DESTROYED: '#64748B',
+      QUARANTINED: '#F97316',
+      HEALING: '#00BFFF',
+      ISOLATED: '#8B5CF6',
+      INITIALIZING: '#FACC15'
     };
 
     this.simulation = d3
@@ -64,7 +73,7 @@ class MeshVisualizer {
       .selectAll('line')
       .data(this.edges, (d) => `${d.source?.node_id || d.source}-${d.target?.node_id || d.target}`)
       .join('line')
-      .style('stroke', '#94a3b8')
+      .style('stroke', '#14B8A6')
       .attr('stroke-opacity', 0.8)
       .attr('stroke-width', (d) => 1 + (Number(d.weight) || 0) * 4);
 
@@ -75,7 +84,8 @@ class MeshVisualizer {
       .attr('r', 14)
       .style('fill', (d) => this.NODE_COLORS[d.status] || '#9ca3af')
       .style('stroke', '#111827')
-      .attr('stroke-width', 1.2);
+      .attr('stroke-width', 1.2)
+      .style('filter', (d) => d.status === 'ACTIVE' ? 'url(#glow)' : 'none');
 
     this.nodeSelection.selectAll('title').remove();
     this.nodeSelection

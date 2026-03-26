@@ -1,137 +1,210 @@
-<!-- All JavaScript in this project is plain JavaScript; TypeScript is explicitly prohibited by SRS Section 7.3. -->
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" class="dark">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DQRMAN Mesh Dashboard</title>
-  <link rel="stylesheet" href="/vendor/leaflet.min.css">
-  <style>
-    body {
-      margin: 0;
-      font-family: sans-serif;
-      background: #f4f7fb;
-      color: #1f2937;
-    }
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>DQRMAN | TACTICAL QUANTUM INTERFACE</title>
+    
+    <!-- Vendor CSS -->
+    <link rel="stylesheet" href="/vendor/leaflet.min.css" />
 
-    #header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
-      border-bottom: 1px solid #d1d5db;
-      background: #ffffff;
-    }
-
-    #title {
-      font-size: 20px;
-      font-weight: 700;
-      margin-right: auto;
-    }
-
-    #stats {
-      display: flex;
-      gap: 12px;
-      font-size: 14px;
-    }
-
-    #main {
-      display: flex;
-      flex-direction: row;
-      min-height: 70vh;
-    }
-
-    #mesh-container,
-    #map-container {
-      width: 70%;
-      min-height: 70vh;
-      border-right: 1px solid #d1d5db;
-      background: #ffffff;
-    }
-
-    #map-container {
-      display: none;
-    }
-
-    #event-feed {
-      width: 30%;
-      min-height: 70vh;
-      background: #ffffff;
-      overflow: auto;
-      padding: 12px;
-      box-sizing: border-box;
-    }
-
-    #controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      padding: 12px 16px;
-      border-top: 1px solid #d1d5db;
-      background: #ffffff;
-    }
-
-    button,
-    select {
-      padding: 8px 10px;
-      font-size: 14px;
-    }
-
-    @keyframes auth-pulse {
-      0%, 100% {
-        opacity: 1;
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@300;400;700&family=Inter:wght@400;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-background": "#e4e7fb", "secondary-container": "#00668a", "tertiary-fixed": "#bda2ff",
+              "tertiary-container": "#8f60fa", "secondary-fixed": "#9adaff", "secondary-dim": "#00afea",
+              "tertiary": "#ac8aff", "surface-container-high": "#191f31", "primary": "#3ff4f4",
+              "surface-container-highest": "#1e2538", "on-tertiary-fixed": "#1f0052", "surface-bright": "#242c40",
+              "surface": "#090e1b", "on-error": "#490006", "surface-container-lowest": "#000000",
+              "on-primary-fixed": "#004343", "on-surface-variant": "#a6aabc", "error": "#ff716c",
+              "on-surface": "#e4e7fb", "on-error-container": "#ffa8a3", "on-primary": "#005858",
+              "secondary-fixed-dim": "#71ceff", "outline": "#707586", "inverse-primary": "#006a6a",
+              "primary-container": "#08e0e0", "inverse-surface": "#faf8ff", "on-tertiary": "#280067",
+              "surface-container": "#131929", "outline-variant": "#434857", "tertiary-dim": "#8455ef",
+              "primary-fixed-dim": "#20e5e5", "on-secondary-container": "#f1f9ff", "surface-variant": "#1e2538",
+              "surface-tint": "#3ff4f4", "tertiary-fixed-dim": "#b091ff", "error-container": "#9f0519",
+              "error-dim": "#d7383b", "on-secondary-fixed-variant": "#005776", "on-tertiary-fixed-variant": "#4600a8",
+              "primary-dim": "#20e5e5", "background": "#090e1b", "surface-container-low": "#0d1321",
+              "on-primary-fixed-variant": "#006262", "secondary": "#00bdfd", "surface-dim": "#090e1b",
+              "on-primary-container": "#004a4a", "on-tertiary-container": "#000000", "on-secondary-fixed": "#00394f",
+              "primary-fixed": "#3ff4f4", "inverse-on-surface": "#505564", "on-secondary": "#003549"
+            },
+            fontFamily: {
+              "headline": ["Orbitron", "sans-serif"],
+              "body": ["Rajdhani", "sans-serif"],
+              "mono": ["JetBrains Mono", "monospace"]
+            },
+            borderRadius: {"DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "9999px"},
+          }
+        }
       }
-      50% {
-        opacity: 0.5;
-      }
-    }
-
-    @keyframes attack-flash {
-      0%, 100% {
-        stroke: #111827;
-      }
-      50% {
-        stroke: #ef4444;
-      }
-    }
-
-    .auth-pulse {
-      animation: auth-pulse 800ms ease-in-out;
-    }
-
-    .attack-flash {
-      animation: attack-flash 1500ms ease-in-out;
-    }
-  </style>
+    </script>
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .bg-grid {
+            background-image: linear-gradient(to right, rgba(67, 72, 87, 0.1) 1px, transparent 1px),
+                              linear-gradient(to bottom, rgba(67, 72, 87, 0.1) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        .glow-primary { box-shadow: 0 0 15px rgba(63, 244, 244, 0.3); }
+        .glow-error { box-shadow: 0 0 15px rgba(255, 113, 108, 0.3); }
+        .glow-warning { box-shadow: 0 0 15px rgba(250, 204, 21, 0.3); }
+        @keyframes pulse-dot {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .animate-pulse-dot { animation: pulse-dot 2s infinite; }
+    </style>
 </head>
-<body>
-  <div id="header">
-    <div id="title">DQRMAN Mesh Dashboard</div>
-    <button id="btn-view" type="button">Toggle View</button>
-    <div id="stats">
-      <span id="active-count">Active: 0</span>
-      <span id="destroyed-count">Destroyed: 0</span>
-      <span id="operational-status">Operational: unknown</span>
-      <span id="connection-status">Connection: disconnected</span>
+<body class="bg-surface text-on-background font-body overflow-hidden h-screen flex flex-col">
+
+<!-- TopAppBar -->
+<header class="bg-[#090E1B]/90 backdrop-blur-md border-b border-[#3FF4F4]/10 shadow-[0_1px_15px_rgba(63,244,244,0.05)] flex justify-between items-center w-full px-6 py-3 z-50 fixed top-0 h-16">
+    <div class="flex items-center gap-8">
+        <span class="font-['Orbitron'] text-xl font-black text-[#3FF4F4] drop-shadow-[0_0_8px_rgba(63,244,244,0.5)]">DQRMAN</span>
+        <nav class="hidden md:flex gap-6">
+            <a id="tab-dashboard" class="font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#00BDFD] border-b-2 border-[#00BDFD] pb-1 cursor-pointer transition-colors">DASHBOARD</a>
+            <a id="tab-map" class="font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#505564] hover:text-[#3FF4F4] transition-colors cursor-pointer">MAP</a>
+        </nav>
     </div>
-  </div>
+    <div class="flex items-center gap-6">
+        <div class="hidden lg:flex items-center gap-6 px-4 border-x border-outline-variant/20">
+            <div class="flex flex-col">
+                <span class="text-[10px] font-['JetBrains_Mono'] text-outline">ACTIVE_NODES</span>
+                <span class="text-primary font-['JetBrains_Mono'] font-bold" id="active-count">0</span>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-[10px] font-['JetBrains_Mono'] text-outline">DESTROYED</span>
+                <span class="text-error font-['JetBrains_Mono'] font-bold" id="destroyed-count">0</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse-dot" id="operational-dot"></div>
+                <span class="text-[10px] font-['JetBrains_Mono'] text-on-surface" id="operational-status">OPERATIONAL: UNKNOWN</span>
+            </div>
+        </div>
+        <button id="btn-view" class="flex items-center gap-2 px-3 py-1 border border-primary/30 text-primary font-['Orbitron'] text-[10px] tracking-widest hover:bg-primary/10 transition-all">
+            TOGGLE_VIEW
+        </button>
+        <div class="flex gap-4">
+            <span class="material-symbols-outlined text-[#3FF4F4] cursor-pointer" data-icon="sensors">sensors</span>
+            <span class="material-symbols-outlined text-[#3FF4F4] cursor-pointer" data-icon="security">security</span>
+            <span class="material-symbols-outlined text-[#3FF4F4] cursor-pointer" data-icon="wifi_tethering">wifi_tethering</span>
+        </div>
+    </div>
+</header>
 
-  <div id="main">
-    <div id="mesh-container"></div>
-    <div id="map-container"></div>
-    <div id="event-feed"></div>
-  </div>
+<!-- SideNavBar -->
+<aside class="bg-[#0D1321]/95 fixed left-0 top-0 h-full z-40 flex flex-col pt-20 w-64 border-r border-[#3FF4F4]/5 shadow-[5px_0_20px_rgba(0,0,0,0.4)]">
+    <div class="px-6 mb-8">
+        <h2 class="font-['JetBrains_Mono'] text-xs uppercase text-[#AC8AFF] font-bold">EVENT_LOG</h2>
+        <p class="font-['JetBrains_Mono'] text-[10px] text-outline opacity-60">QUANTUM_ENCRYPTED</p>
+    </div>
+    <nav class="flex flex-col">
+        <a class="flex items-center gap-3 bg-[#3FF4F4]/10 text-[#3FF4F4] border-l-4 border-[#3FF4F4] px-4 py-3 font-['JetBrains_Mono'] text-xs uppercase" href="javascript:void(0)">
+            <span class="material-symbols-outlined text-sm" data-icon="terminal">terminal</span>
+            LIVE_FEED
+        </a>
+        <a class="flex items-center gap-3 text-[#505564] hover:bg-[#191F31] px-4 py-3 font-['JetBrains_Mono'] text-xs uppercase transition-all duration-300 ease-in-out" href="javascript:void(0)">
+            <span class="material-symbols-outlined text-sm" data-icon="verified_user">verified_user</span>
+            AUTH_SUCCESS
+        </a>
+    </nav>
+    <div class="mt-auto p-4 border-t border-outline-variant/10">
+        <div class="bg-surface-container-high p-3 border border-outline-variant/20">
+            <div class="text-[10px] text-outline mb-1 font-['JetBrains_Mono'] uppercase">Mesh_Health</div>
+            <div class="h-1 bg-surface-container flex gap-0.5">
+                <div class="w-1/4 bg-primary"></div>
+                <div class="w-1/4 bg-primary"></div>
+                <div class="w-1/4 bg-primary"></div>
+                <div class="w-1/4 bg-outline-variant"></div>
+            </div>
+        </div>
+    </div>
+</aside>
 
-  <div id="controls">
-    <select id="node-select">
-      <option value="">Select node</option>
-    </select>
-    <button id="btn-destroy" type="button">Destroy Node</button>
-    <button id="btn-replay" type="button">Inject Replay</button>
-    <button id="btn-spoof" type="button">Inject Spoof</button>
-  </div>
+<!-- Main Content Canvas -->
+<main class="flex-1 flex mt-16 ml-64 overflow-hidden relative">
+    
+    <!-- Visualiser (Left 70%) -->
+    <section class="w-[70%] h-full relative bg-grid bg-surface overflow-hidden">
+        <div class="absolute top-4 left-6 z-10 pointer-events-none">
+            <div class="flex items-center gap-2 px-3 py-1 bg-surface-container-high/80 border border-primary/20">
+                <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                <span class="text-[10px] font-['Orbitron'] tracking-tighter text-primary" id="connection-status">SCANNING_MESH_NODES...</span>
+            </div>
+        </div>
 
-  <script src="/vendor/d3.min.js"></script>
+        <!-- MESH CONTAINER AND MAP CONTAINER -->
+        <div id="mesh-container" class="w-full h-full absolute inset-0 transition-opacity duration-300" style="opacity: 1; pointer-events: auto; z-index: 10;"></div>
+        <div id="map-container" class="w-full h-full absolute inset-0 transition-opacity duration-300" style="opacity: 0; pointer-events: none; background: #0A0F1C; z-index: 1;"></div>
+    </section>
+
+    <!-- Event Feed (Right 30%) -->
+    <section class="w-[30%] h-full bg-surface-container-low border-l border-outline-variant/20 flex flex-col">
+        <div class="p-4 border-b border-outline-variant/20 flex justify-between items-center bg-surface-container-high/50">
+            <h3 class="font-['Orbitron'] text-xs tracking-widest">LIVE_OPERATIONS</h3>
+            <span class="text-[10px] text-outline font-mono">STREAM: ACTIVE</span>
+        </div>
+        
+        <div id="event-feed" class="flex-1 overflow-y-auto p-4 flex flex-col font-['JetBrains_Mono'] text-[11px]">
+             <!-- Dynamically populated -->
+        </div>
+    </section>
+
+</main>
+
+<!-- BottomNavBar (Controls Bar) -->
+<footer class="bg-gradient-to-t from-[#090E1B] to-transparent fixed bottom-0 w-full z-50 flex justify-between items-center h-20 px-8 border-t border-[#3FF4F4]/20 pointer-events-none">
+    <div class="flex items-center gap-6 pointer-events-auto ml-64">
+        <div class="flex flex-col gap-1">
+            <label class="text-[9px] font-['Orbitron'] text-outline tracking-widest">TARGET_NODE</label>
+            <div class="relative group">
+                <select id="node-select" class="bg-surface-container border border-outline-variant/30 text-primary font-['JetBrains_Mono'] text-sm py-1.5 pl-3 pr-10 focus:ring-0 focus:border-primary appearance-none cursor-pointer">
+                    <option value="">NODE_SELECT</option>
+                </select>
+                <span class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-primary pointer-events-none" data-icon="ads_click">ads_click</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="flex gap-4 pointer-events-auto">
+        <button id="btn-destroy" class="flex flex-col items-center justify-center bg-surface-container-low text-[#505564] px-6 py-2 hover:bg-error/20 border border-error/40 group hover:glow-error transition-all">
+            <span class="material-symbols-outlined text-error mb-1" data-icon="dangerous">dangerous</span>
+            <span class="font-['Rajdhani'] font-bold tracking-wider text-[10px] text-error">DESTROY</span>
+        </button>
+        <button id="btn-replay" class="flex flex-col items-center justify-center bg-surface-container-low text-[#505564] px-6 py-2 hover:bg-yellow-500/20 border border-yellow-500/40 group hover:glow-warning transition-all">
+            <span class="material-symbols-outlined text-yellow-500 mb-1" data-icon="restart_alt">restart_alt</span>
+            <span class="font-['Rajdhani'] font-bold tracking-wider text-[10px] text-yellow-500">REPLAY</span>
+        </button>
+        <button id="btn-spoof" class="flex flex-col items-center justify-center bg-surface-container-low text-[#505564] px-6 py-2 hover:bg-orange-500/20 border border-orange-500/40 group hover:glow-warning transition-all">
+            <span class="material-symbols-outlined text-orange-500 mb-1" data-icon="masks">masks</span>
+            <span class="font-['Rajdhani'] font-bold tracking-wider text-[10px] text-orange-500">SPOOF</span>
+        </button>
+    </div>
+
+    <!-- Right HUD meta string -->
+    <div class="flex items-center gap-4 text-outline font-['JetBrains_Mono'] text-[10px] pointer-events-auto">
+        <div class="flex flex-col items-end">
+            <span>DQRMAN_ENGINE_V1</span>
+            <span>SECURE_AUTH</span>
+        </div>
+        <span class="material-symbols-outlined text-primary text-xl" data-icon="settings" style="font-variation-settings: 'FILL' 1;">settings</span>
+    </div>
+</footer>
+
+<!-- Tactical Overlay FX -->
+<div class="pointer-events-none fixed inset-0 z-10 opacity-[0.03]" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAPFXbwY5LvP1gvj39HHKKAE5yYItToGN1gnILO2ZulrvkJrbrgnjaL-6hh7X-q4pXpDreyWGun9BafIOQXHSIWG4cVJ1UpPi61tv4uAW1HGIIjeGvTORbT3BkhKMRs8V8w0SGLirbl2CXJ3hm7AVhWf8VSoAjjKqS6mJ9q7QAGsiy43HyrwmVap0ZyUpTkHP-5kL3tt5praKIOf3AfaYUM_wVRnQX7wB7SZNHddES73kd4S77ETUlu1071Ji0hmk0xH8zWJupKZe0');"></div>
+<div class="pointer-events-none fixed inset-0 z-20 shadow-[inset_0_0_100px_rgba(0,0,0,0.8)]"></div>
+
+<script src="/vendor/d3.min.js"></script>
   <script src="/vendor/react.production.min.js"></script>
   <script src="/vendor/react-dom.production.min.js"></script>
   <script src="/vendor/leaflet.min.js"></script>
@@ -297,9 +370,12 @@
           data.events.forEach(event => {
             const feedDiv = document.getElementById('event-feed');
             const eventLine = document.createElement('div');
-            eventLine.style.padding = '6px';
-            eventLine.style.borderBottom = '1px solid #e5e7eb';
-            eventLine.style.fontSize = '12px';
+            eventLine.style.padding = '8px 6px';
+            eventLine.style.borderBottom = '1px solid #1E293B';
+            eventLine.style.fontSize = '13px';
+            eventLine.style.display = 'flex';
+            eventLine.style.alignItems = 'center';
+            eventLine.style.gap = '8px';
 
             let cleanTime = '';
             if (event.timestamp) {
@@ -321,7 +397,26 @@
               });
             }
 
-            eventLine.textContent = `[${cleanTime}] ${event.event_type}: ${JSON.stringify(event)}`;
+            let badgeColor = '#64748B'; // default grey for NODE_FAILED and others
+            const et = String(event.event_type || 'UNKNOWN');
+            if (et.includes('AUTH')) {
+              badgeColor = 'var(--color-trusted, #22C55E)';
+            } else if (et.includes('REPLAY') || et.includes('SPOOF')) {
+              badgeColor = 'var(--color-compromised, #EF4444)';
+            }
+
+            let shortId = 'SYSTEM';
+            const possibleId = event.target_node_id || event.node_id || event.destroyed_node_id || 
+                               (event.payload && (event.payload.target_node_id || event.payload.node_id || event.payload.source_node_id));
+            if (possibleId && typeof possibleId === 'string') {
+              shortId = possibleId.substring(0, 8);
+            }
+
+            eventLine.innerHTML = `
+              <span style="color: #64748B; font-family: 'JetBrains Mono', monospace;">${cleanTime}</span>
+              <span style="background: ${badgeColor}; color: #0A0F1C; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-family: 'Orbitron', sans-serif; font-size: 10px;">${et}</span>
+              <span style="color: #E2E8F0; font-family: 'JetBrains Mono', monospace;">${shortId}</span>
+            `;
             feedDiv.insertBefore(eventLine, feedDiv.firstChild);
 
             // Remove old events if feed exceeds 200 children
@@ -381,27 +476,61 @@
         document.getElementById('connection-status').textContent = 'Connection: reconnecting';
       }
 
-      function toggleView() {
+      function toggleView(viewParam) {
         const meshContainer = document.getElementById('mesh-container');
         const mapContainer = document.getElementById('map-container');
+        const tabDashboard = document.getElementById('tab-dashboard');
+        const tabMap = document.getElementById('tab-map');
 
-        if (meshContainer.style.display === 'none') {
-          meshContainer.style.display = 'block';
-          mapContainer.style.display = 'none';
+        // Determine if we should switch to map
+        let switchToMap = false;
+        if (viewParam === 'map') {
+            switchToMap = true;
+        } else if (viewParam === 'dashboard') {
+            switchToMap = false;
         } else {
-          meshContainer.style.display = 'none';
-          mapContainer.style.display = 'block';
-          map.map.invalidateSize();
+            // Toggle behavior
+            switchToMap = (meshContainer.style.opacity !== '0');
+        }
+
+        if (switchToMap) {
+          // Switch to MAP
+          meshContainer.style.opacity = '0';
+          meshContainer.style.pointerEvents = 'none';
+          meshContainer.style.zIndex = '1';
+          
+          mapContainer.style.opacity = '1';
+          mapContainer.style.pointerEvents = 'auto';
+          mapContainer.style.zIndex = '10';
+
+          tabDashboard.className = "font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#505564] hover:text-[#3FF4F4] transition-colors cursor-pointer";
+          tabMap.className = "font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#00BDFD] border-b-2 border-[#00BDFD] pb-1 cursor-pointer transition-colors";
+          
+          setTimeout(() => map.map.invalidateSize(), 50);
 
           // Request live location the first time we switch to map view
           if (!mapViewedOnce) {
             mapViewedOnce = true;
             requestLiveLocation();
           }
+        } else {
+          // Switch to DASHBOARD
+          meshContainer.style.opacity = '1';
+          meshContainer.style.pointerEvents = 'auto';
+          meshContainer.style.zIndex = '10';
+
+          mapContainer.style.opacity = '0';
+          mapContainer.style.pointerEvents = 'none';
+          mapContainer.style.zIndex = '1';
+
+          tabDashboard.className = "font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#00BDFD] border-b-2 border-[#00BDFD] pb-1 cursor-pointer transition-colors";
+          tabMap.className = "font-['Orbitron'] tracking-[0.1em] uppercase text-sm text-[#505564] hover:text-[#3FF4F4] transition-colors cursor-pointer";
         }
       }
 
-      document.getElementById('btn-view').addEventListener('click', toggleView);
+      document.getElementById('btn-view').addEventListener('click', () => toggleView());
+      document.getElementById('tab-dashboard').addEventListener('click', () => toggleView('dashboard'));
+      document.getElementById('tab-map').addEventListener('click', () => toggleView('map'));
 
       document.getElementById('btn-destroy').addEventListener('click', async () => {
         const selectedId = document.getElementById('node-select').value;
