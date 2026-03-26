@@ -264,3 +264,27 @@ def test_haversine_far_apart():
     score = mesh.compute_proximity_score(a, b)
     assert score < 0.01
 
+
+def test_scatter_within_spread():
+    mesh = TrustGraph()
+    center_lat, center_lon = 28.6139, 77.2090
+    spread_m = 500
+    
+    # Create 10 nodes
+    for i in range(10):
+        mesh.add_node(_node_id(2001 + i), _pubkey(2001 + i))
+        
+    # Scatter nodes
+    mesh.scatter_nodes_geographically(center_lat, center_lon, spread_m=spread_m)
+    
+    max_dist = 0
+    for node_id in mesh.get_active_nodes():
+        node_data = mesh._graph.nodes[node_id]
+        dist_m = _haversine_m(center_lat, center_lon, node_data['lat'], node_data['lon'])
+        if dist_m > max_dist:
+            max_dist = dist_m
+        assert dist_m <= 600.0, f"Node {node_id} is too far: {dist_m}m"
+        
+    print(f"\nMax distance found: {max_dist:.2f}m")
+
+
