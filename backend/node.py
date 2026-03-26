@@ -223,6 +223,10 @@ class AnomalyLogger:
     def check_anomaly(self):
         """Evaluate whether recent failures meet or exceed anomaly threshold.
 
+        Filters self.failures by time window: only entries where the elapsed
+        time since the failure is within self.window_seconds are considered.
+        Does NOT mutate self.failures — use clear_expired for pruning.
+
         Args:
             None.
 
@@ -233,9 +237,8 @@ class AnomalyLogger:
             None.
         """
         now = time.time()
-        cutoff = now - self.window_seconds
-        self.failures = [(ts, r) for ts, r in self.failures if ts >= cutoff]
-        return len(self.failures) >= self.threshold
+        recent = [(ts, r) for ts, r in self.failures if now - ts <= self.window_seconds]
+        return len(recent) >= self.threshold
 
     def get_log_entry(self):
         """Build structured anomaly alert payload for logging.
@@ -250,8 +253,7 @@ class AnomalyLogger:
             None.
         """
         now = time.time()
-        cutoff = now - self.window_seconds
-        recent = [(ts, r) for ts, r in self.failures if ts >= cutoff]
+        recent = [(ts, r) for ts, r in self.failures if now - ts <= self.window_seconds]
         return {
             'event_type': 'ANOMALY_ALERT',
             'node_id': self.node.node_id,
