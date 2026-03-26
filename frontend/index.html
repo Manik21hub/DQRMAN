@@ -135,6 +135,7 @@
   <script src="/vendor/react.production.min.js"></script>
   <script src="/vendor/react-dom.production.min.js"></script>
   <script src="/vendor/leaflet.min.js"></script>
+  <script src="/vendor/socket.io.min.js"></script>
   <script src="/mesh.js"></script>
   <script src="/map.js"></script>
   <script src="/socket.js"></script>
@@ -142,10 +143,10 @@
     window.DQRMAN = window.DQRMAN || {};
 
     document.addEventListener('DOMContentLoaded', () => {
-      const mesh = new MeshVisualizer('mesh-container');
+      const mesh = new MeshVisualizer('#mesh-container');
       const map = new MeshMap('map-container');
       const socket = new MeshSocket(
-        `ws://${window.location.host}/socket.io/?transport=websocket`,
+        window.location.origin,
         {
           onMessage: onMsg,
           onConnect: onConnect,
@@ -187,14 +188,16 @@
         // Clear and rebuild options
         select.innerHTML = '<option value="">Select node</option>';
         activeNodes.forEach(node => {
+          const nodeId = node.node_id || node.id;
+          if (!nodeId) return;
           const option = document.createElement('option');
-          option.value = node.id;
-          option.textContent = `${node.id.substring(0, 16)}... (${node.status})`;
+          option.value = nodeId;
+          option.textContent = `${String(nodeId).substring(0, 16)}... (${node.status})`;
           select.appendChild(option);
         });
 
         // Restore selection if still valid
-        if (currentSelection && activeNodes.find(n => n.id === currentSelection)) {
+        if (currentSelection && activeNodes.find(n => (n.node_id || n.id) === currentSelection)) {
           select.value = currentSelection;
         }
       }
@@ -215,7 +218,7 @@
             fetch('/api/v1/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ latitude: lat, longitude: lon })
+              body: JSON.stringify({ lat, lon, accuracy: 500 })
             }).catch(err => console.error('Location POST failed:', err));
           },
           (error) => {
@@ -327,8 +330,11 @@
               // Build node position lookup
               const nodeLatLonMap = {};
               (currentNodes || []).forEach(node => {
-                if (node.lat && node.lon) {
-                  nodeLatLonMap[node.id] = { lat: node.lat, lon: node.lon };
+                if (node.lat != null && node.lon != null) {
+                  const nodeId = node.node_id || node.id;
+                  if (nodeId) {
+                    nodeLatLonMap[nodeId] = { lat: node.lat, lon: node.lon };
+                  }
                 }
               });
 
@@ -401,7 +407,7 @@
           return;
         }
         const button = document.getElementById('btn-replay');
-        await makeRequest('POST', '/api/v1/attack', { type: 'replay', node_id: selectedId }, button);
+        await makeRequest('POST', '/api/v1/attack', { attack_type: 'replay', target_node_id: selectedId }, button);
       });
 
       document.getElementById('btn-spoof').addEventListener('click', async () => {
@@ -411,7 +417,7 @@
           return;
         }
         const button = document.getElementById('btn-spoof');
-        await makeRequest('POST', '/api/v1/attack', { type: 'spoof', node_id: selectedId }, button);
+        await makeRequest('POST', '/api/v1/attack', { attack_type: 'spoof', target_node_id: selectedId }, button);
       });
 
       // Initialize WebSocket connection

@@ -106,26 +106,28 @@ class MeshMap {
 
     const nodeIds = new Set();
     nodes.forEach(node => {
-      if (!node.lat || !node.lon) return;
-      nodeIds.add(node.id);
+      if (node.lat == null || node.lon == null) return;
+      const nodeId = node.node_id || node.id;
+      if (!nodeId) return;
+      nodeIds.add(nodeId);
 
       const colour = nodeStatusColors[node.status] || '#a855f7';
       const icon = this._droneIcon(colour, 28);
 
-      if (this._markers[node.id]) {
+      if (this._markers[nodeId]) {
         // Update existing marker
-        this._markers[node.id].setLatLng([node.lat, node.lon]);
-        this._markers[node.id].setIcon(icon);
-        this._markers[node.id]._nodeColour = colour;
-        this._markers[node.id]._nodeStatus = node.status;
+        this._markers[nodeId].setLatLng([node.lat, node.lon]);
+        this._markers[nodeId].setIcon(icon);
+        this._markers[nodeId]._nodeColour = colour;
+        this._markers[nodeId]._nodeStatus = node.status;
       } else {
         // Create new marker
         const marker = L.marker([node.lat, node.lon], { icon })
-          .bindTooltip(`${node.id.substring(0, 8)} (${node.status})`, { permanent: false })
+          .bindTooltip(`${String(nodeId).substring(0, 8)} (${node.status})`, { permanent: false })
           .addTo(this.map);
         marker._nodeColour = colour;
         marker._nodeStatus = node.status;
-        this._markers[node.id] = marker;
+        this._markers[nodeId] = marker;
       }
     });
 
@@ -147,15 +149,18 @@ class MeshMap {
     // Build lat/lon lookup from nodes
     const nodePositions = {};
     nodes.forEach(node => {
-      if (node.lat && node.lon) {
-        nodePositions[node.id] = { lat: node.lat, lon: node.lon };
+      if (node.lat != null && node.lon != null) {
+        const nodeId = node.node_id || node.id;
+        if (nodeId) {
+          nodePositions[nodeId] = { lat: node.lat, lon: node.lon };
+        }
       }
     });
 
     const edgeKeys = new Set();
     edges.forEach(edge => {
-      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      const sourceId = typeof edge.source === 'object' ? (edge.source.node_id || edge.source.id) : edge.source;
+      const targetId = typeof edge.target === 'object' ? (edge.target.node_id || edge.target.id) : edge.target;
       const edgeKey = `${sourceId}--${targetId}`;
 
       if (!nodePositions[sourceId] || !nodePositions[targetId]) return;
@@ -234,8 +239,8 @@ class MeshMap {
     // Phase 3 (500ms): Draw new routes as dashed orange
     setTimeout(() => {
       newEdges.forEach(edge => {
-        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const sourceId = typeof edge.source === 'object' ? (edge.source.node_id || edge.source.id) : edge.source;
+        const targetId = typeof edge.target === 'object' ? (edge.target.node_id || edge.target.id) : edge.target;
         const edgeKey = `${sourceId}--${targetId}`;
 
         if (!nodeLatLonMap[sourceId] || !nodeLatLonMap[targetId]) return;
@@ -260,8 +265,8 @@ class MeshMap {
     // Phase 4 (1500ms): Replace dashed orange with solid green, slightly thicker
     setTimeout(() => {
       newEdges.forEach(edge => {
-        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const sourceId = typeof edge.source === 'object' ? (edge.source.node_id || edge.source.id) : edge.source;
+        const targetId = typeof edge.target === 'object' ? (edge.target.node_id || edge.target.id) : edge.target;
         const edgeKey = `${sourceId}--${targetId}`;
 
         if (this._edges[edgeKey]) {
@@ -279,8 +284,8 @@ class MeshMap {
     // Phase 5 (2000ms): Settle to normal blue at standard trust-weighted thickness
     setTimeout(() => {
       newEdges.forEach(edge => {
-        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        const sourceId = typeof edge.source === 'object' ? (edge.source.node_id || edge.source.id) : edge.source;
+        const targetId = typeof edge.target === 'object' ? (edge.target.node_id || edge.target.id) : edge.target;
         const edgeKey = `${sourceId}--${targetId}`;
 
         if (this._edges[edgeKey]) {

@@ -1,52 +1,46 @@
 class MeshSocket {
-  constructor(url, onMessage, onConnect, onDisconnect) {
+  constructor(url, handlers) {
     this.url = url;
-    this.onMessage = typeof onMessage === 'function' ? onMessage : function () {};
-    this.onConnect = typeof onConnect === 'function' ? onConnect : function () {};
-    this.onDisconnect = typeof onDisconnect === 'function' ? onDisconnect : function () {};
+    const callbacks = handlers || {};
+    this.onMessage = typeof callbacks.onMessage === 'function' ? callbacks.onMessage : function () {};
+    this.onConnect = typeof callbacks.onConnect === 'function' ? callbacks.onConnect : function () {};
+    this.onDisconnect = typeof callbacks.onDisconnect === 'function' ? callbacks.onDisconnect : function () {};
 
-    this.ws = null;
-    this.reconnectDelay = 1000;
-    this.maxReconnectDelay = 30000;
-    this.reconnectTimer = null;
+    this.socket = null;
   }
 
   connect() {
-    this.ws = new WebSocket(this.url);
+    if (typeof window.io !== 'function') {
+      this.onDisconnect();
+      return;
+    }
 
-    this.ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.onMessage(data);
-      } catch (_err) {
-        // Ignore malformed messages to keep socket flow alive.
-      }
-    };
+    this.socket = window.io(this.url, {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+    });
 
-    this.ws.onopen = () => {
-      this.reconnectDelay = 1000;
+    this.socket.on('connect', () => {
       this.onConnect();
-    };
+    });
 
-    this.ws.onclose = () => {
+    this.socket.on('disconnect', () => {
       this.onDisconnect();
-      this.reconnect();
-    };
+    });
 
-    this.ws.onerror = () => {
+    this.socket.on('connect_error', () => {
       this.onDisconnect();
-      this.reconnect();
-    };
-  }
+    });
 
-  reconnect() {
-    clearTimeout(this.reconnectTimer);
-
-    this.reconnectTimer = setTimeout(() => {
-      this.connect();
-    }, this.reconnectDelay);
-
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
+    this.socket.on('mesh_state', (message) => {
+      const payload = message && message.payload ? message.payload : {};
+      this.onMessage({
+        nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
+        edges: Array.isArray(payload.edges) ? payload.edges : [],
+        events: Array.isArray(payload.events) ? payload.events : [],
+      });
+    });
   }
 }
 

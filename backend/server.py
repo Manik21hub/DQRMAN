@@ -278,6 +278,14 @@ def serve_index():
 	return send_from_directory(FRONTEND_DIR, 'index.html')
 
 
+@app.get('/<path:filename>')
+def serve_static(filename):
+	"""Serve root-level static frontend Javascript assets."""
+	if filename in ['mesh.js', 'map.js', 'socket.js']:
+		return send_from_directory(FRONTEND_DIR, filename)
+	return ('', 404)
+
+
 @app.get('/vendor/<path:filename>')
 def serve_vendor(filename):
 	"""GET /vendor/<filename>.

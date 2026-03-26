@@ -2,6 +2,12 @@ class MeshVisualizer {
   constructor(containerSelector) {
     // SVG compatibility verified for Chrome 120, Firefox 120, and Edge 120
     this.container = d3.select(containerSelector);
+    if (this.container.empty() && typeof containerSelector === 'string') {
+      this.container = d3.select(`#${containerSelector}`);
+    }
+    if (this.container.empty()) {
+      throw new Error(`MeshVisualizer container not found: ${containerSelector}`);
+    }
     this.width = this.container.node().clientWidth || 800;
     this.height = this.container.node().clientHeight || 600;
 
