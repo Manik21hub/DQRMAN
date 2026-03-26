@@ -168,3 +168,39 @@ class AttackSimulator:
             detection_reason=error_reason or "NOT_DETECTED",
             duration_ms=duration_ms
         )
+
+    def jamming_simulation(self, target_node, target_receiver, duration=5.0):
+        """Simulates RF jamming blocking heartbeats to a specific receiver.
+        
+        Temporarily sets jamming_active on the receiver to drop all incoming 
+        packets, then restores presence to prevent node from being permanently 
+        isolated after the attack ends.
+        """
+        start_time = time.time()
+        
+        logger.info(f"Jamming: Starting {duration}s interference at receiver for {target_node.node_id[:8]}")
+        
+        # Step 1: Activate jamming state on the receiver
+        target_receiver.jamming_active = True
+        
+        # Step 2: Maintain jamming for the specified duration
+        time.sleep(duration)
+        
+        # Step 3: Deactivate jamming
+        target_receiver.jamming_active = False
+        
+        # Step 4: Restore presence to prevent stale isolation
+        # Immediately update last_seen for the target node to current time
+        target_receiver.last_seen[target_node.node_id] = time.time()
+        
+        logger.info("Jamming: Interference ended and node presence was restored.")
+        
+        duration_ms = (time.time() - start_time) * 1000
+        
+        return AttackResult(
+            attack_type="jamming_simulation",
+            target_node_id=target_node.node_id,
+            detected=True,  # Jamming is a physical layer event usually handled by isolation logic
+            detection_reason="JAMMING_WINDOW_EXPIRED",
+            duration_ms=duration_ms
+        )
