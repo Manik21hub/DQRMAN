@@ -231,3 +231,36 @@ def test_survivors_authenticate():
     survivor_a, survivor_b = nodes[8], nodes[9]
     survivor_result = AuthProtocol().authenticate(survivor_a, survivor_b)
     assert survivor_result['success'] is True
+
+
+def test_haversine_same_point():
+    mesh = TrustGraph()
+    a, b = _node_id(1001), _node_id(1002)
+    mesh.add_node(a, _pubkey(1001))
+    mesh.add_node(b, _pubkey(1002))
+    mesh.set_node_coords(a, 10.0, 20.0)
+    mesh.set_node_coords(b, 10.0, 20.0)
+    assert mesh.compute_proximity_score(a, b) == 1.0
+
+
+def test_haversine_500m():
+    mesh = TrustGraph()
+    a, b = _node_id(1003), _node_id(1004)
+    mesh.add_node(a, _pubkey(1003))
+    mesh.add_node(b, _pubkey(1004))
+    mesh.set_node_coords(a, 28.6139, 77.2090)
+    mesh.set_node_coords(b, 28.6184, 77.2090)
+    score = mesh.compute_proximity_score(a, b)
+    assert 0.4 <= score <= 0.6
+
+
+def test_haversine_far_apart():
+    mesh = TrustGraph()
+    a, b = _node_id(1005), _node_id(1006)
+    mesh.add_node(a, _pubkey(1005))
+    mesh.add_node(b, _pubkey(1006))
+    mesh.set_node_coords(a, 0.0, 0.0)
+    mesh.set_node_coords(b, 90.0, 0.0)
+    score = mesh.compute_proximity_score(a, b)
+    assert score < 0.01
+
