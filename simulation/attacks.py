@@ -79,3 +79,43 @@ class AttackSimulator:
             detection_reason=error_reason or "NOT_DETECTED",
             duration_ms=duration_ms
         )
+
+    def replay_attack_within_window(self, source_node, target_node):
+        """Executes an immediate replay attack to verify nonce blacklisting.
+        
+        Schedules two identical submissions. The first should pass (or fail 
+        legitimately), the second must be rejected as a duplicate nonce.
+        """
+        start_time = time.time()
+        
+        # Step 1: Capture a message
+        logger.info(f"Capture: Intercepting challenge for bit-identical replay.")
+        challenge = self.capture_message(source_node, target_node)
+        
+        # Step 2: Submit first time to register the nonce in target's cache
+        logger.info("Replay: Submitting first attempt (Registration)...")
+        target_node.verify_challenge(challenge)
+        
+        # Step 3: Immediately submit the exact same challenge again
+        logger.info("Replay: Submitting second attempt (Immediate Replay)...")
+        success, error_reason = target_node.verify_challenge(challenge)
+        
+        detected = not success
+        
+        # Validation: Must be rejected because of DUPLICATE_NONCE, not timing
+        if detected:
+            assert error_reason != 'TIMESTAMP_EXPIRED', "Replay detected as expired instead of duplicate!"
+            assert error_reason == 'DUPLICATE_NONCE', f"Expected DUPLICATE_NONCE but got {error_reason}"
+            logger.info(f"Nonce replay correctly detected: {error_reason}")
+        else:
+            logger.critical("NFR-09 VIOLATION: Immediate nonce replay was accepted by the target node!")
+            
+        duration_ms = (time.time() - start_time) * 1000
+        
+        return AttackResult(
+            attack_type="replay_within_window",
+            target_node_id=target_node.node_id,
+            detected=detected,
+            detection_reason=error_reason or "NOT_DETECTED",
+            duration_ms=duration_ms
+        )
