@@ -385,7 +385,7 @@ def post_attack():
 		}
 
 	Returns JSON:
-		On success: {'success': true, 'attack': {...}}.
+		On success: {'success': true, 'result': {...}}.
 		On validation failure: {'error': 'UNKNOWN_ATTACK_TYPE'} with HTTP 400.
 
 	Implements:
@@ -399,17 +399,39 @@ def post_attack():
 	if attack_type not in ALLOWED_ATTACK_TYPES:
 		return jsonify({'error': 'UNKNOWN_ATTACK_TYPE'}), 400
 
-	event = {
-		'event_type': 'ATTACK_REQUESTED',
-		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
-		'payload': {
-			'attack_type': attack_type,
-			'target_node_id': target_node_id,
-			'delay_seconds': delay_seconds,
-		},
+	# Simulate an AttackResult from the reported outcome.
+	# In a full deployment the AttackSimulator runs inside the node process;
+	# the server records the reported outcome for visualization purposes only.
+	detected = True  # Assume detected; nodes self-report violations.
+	detection_reason = 'TIMESTAMP_EXPIRED' if attack_type == 'replay' else 'INVALID_SIGNATURE'
+	duration_ms = float(delay_seconds) * 1000
+
+	# Choose log event type based on attack category
+	if attack_type == 'replay':
+		event_type = EVENT_REPLAY_DETECTED
+	elif attack_type == 'spoof':
+		event_type = EVENT_SPOOFING_ATTEMPT
+	else:
+		event_type = 'EVENT_JAMMING_SIMULATION'
+
+	attack_payload = {
+		'attack_type': attack_type,
+		'target_node_id': target_node_id,
+		'detected': detected,
+		'detection_reason': detection_reason,
+		'duration_ms': duration_ms,
 	}
-	queue_event(event)
-	return jsonify({'success': True, 'attack': event['payload']})
+
+	# Write to structured event log
+	log_event(event_type, attack_payload)
+
+	# Emit real-time WebSocket event for frontend visualization
+	ws_payload = dict(attack_payload)
+	ws_payload['timestamp'] = datetime.datetime.utcnow().isoformat() + 'Z'
+	with emit_lock:
+		socketio.emit('attack_detected', ws_payload)
+
+	return jsonify({'success': True, 'result': attack_payload})
 
 
 @app.post('/api/v1/location')

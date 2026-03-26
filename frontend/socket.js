@@ -5,6 +5,8 @@ class MeshSocket {
     this.onMessage = typeof callbacks.onMessage === 'function' ? callbacks.onMessage : function () {};
     this.onConnect = typeof callbacks.onConnect === 'function' ? callbacks.onConnect : function () {};
     this.onDisconnect = typeof callbacks.onDisconnect === 'function' ? callbacks.onDisconnect : function () {};
+    // Assignable callback for direct attack_detected socket events
+    this.onAttackDetected = typeof callbacks.onAttackDetected === 'function' ? callbacks.onAttackDetected : function () {};
 
     this.socket = null;
   }
@@ -40,6 +42,11 @@ class MeshSocket {
         edges: Array.isArray(payload.edges) ? payload.edges : [],
         events: Array.isArray(payload.events) ? payload.events : [],
       });
+    });
+
+    // Forward server-emitted attack_detected events to the registered callback
+    this.socket.on('attack_detected', (data) => {
+      this.onAttackDetected(data);
     });
   }
 }

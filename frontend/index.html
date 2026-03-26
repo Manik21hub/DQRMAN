@@ -157,7 +157,15 @@
         {
           onMessage: onMsg,
           onConnect: onConnect,
-          onDisconnect: onDisconnect
+          onDisconnect: onDisconnect,
+          onAttackDetected: (data) => {
+            const nodeId = data.target_node_id;
+            const attackType = data.attack_type === 'replay' ? 'replay' : 'spoof';
+            if (nodeId) {
+              mesh.showAttack(nodeId, attackType);
+              if (window._meshMap) window._meshMap.showAttack(nodeId, attackType);
+            }
+          }
         }
       );
 
@@ -354,14 +362,12 @@
               }
             }
 
-            // Handle attack events: animate on both D3 and Leaflet map
-            if (event.event_type === 'REPLAY_DETECTED' && event.node_id) {
-              mesh.showAttack(event.node_id, 'replay');
-              map.showAttack(event.node_id, 'replay');
-            }
-            if (event.event_type === 'SPOOFING_ATTEMPT' && event.node_id) {
-              mesh.showAttack(event.node_id, 'spoof');
-              map.showAttack(event.node_id, 'spoof');
+            // Handle attack events forwarded via the events[] array
+            if ((event.event_type === 'EVENT_REPLAY_DETECTED' || event.event_type === 'EVENT_SPOOFING_ATTEMPT') && event.target_node_id) {
+              const nodeId = event.target_node_id;
+              const attackType = event.event_type === 'EVENT_REPLAY_DETECTED' ? 'replay' : 'spoof';
+              mesh.showAttack(nodeId, attackType);
+              if (window._meshMap) window._meshMap.showAttack(nodeId, attackType);
             }
           });
         }
