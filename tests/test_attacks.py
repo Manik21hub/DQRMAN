@@ -103,6 +103,41 @@ def test_master_all_attacks(nodes, simulator):
     assert undetected == 0
 
 
+def test_500_replay_nfr09():
+    """Specific NFR-09 test: replay_attack_outside_window 500 times with explicit print."""
+    mesh = TrustGraph()
+    source_node = Node('source_nfr09')
+    target_node = Node('target_nfr09')
+    source_node.rejoin(mesh, [])
+    target_node.rejoin(mesh, [])
+    
+    # Establish trust so `verify_challenge` doesn't fail just for unknown peer
+    source_node.trust_table[target_node.node_id] = target_node.public_key
+    target_node.trust_table[source_node.node_id] = source_node.public_key
+    
+    simulator = AttackSimulator(mesh)
+    
+    current_time = 4000000.0
+    
+    def mock_time():
+        return current_time
+        
+    def mock_sleep(seconds):
+        nonlocal current_time
+        current_time += seconds
+        
+    false_negatives = []
+    
+    with patch('time.time', side_effect=mock_time), patch('time.sleep', side_effect=mock_sleep):
+        for i in range(500):
+            result = simulator.replay_attack_outside_window(source_node, target_node, delay=10.0)
+            if not result.detected:
+                false_negatives.append(i)
+                
+    assert len(false_negatives) == 0, f"False negatives found at indices: {false_negatives}"
+    print('NFR-09 PASS: 500/500 replay attacks detected (0 false negatives)')
+
+
 def test_anomaly_logger_threshold():
     """(5) AnomalyLogger: 4 failures is False, 5th is True."""
     node_mock = MagicMock()
