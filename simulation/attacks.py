@@ -2,6 +2,7 @@
 
 import logging
 import time
+import struct
 from dataclasses import dataclass, field
 from backend.crypto import CryptoModule
 
@@ -114,6 +115,54 @@ class AttackSimulator:
         
         return AttackResult(
             attack_type="replay_within_window",
+            target_node_id=target_node.node_id,
+            detected=detected,
+            detection_reason=error_reason or "NOT_DETECTED",
+            duration_ms=duration_ms
+        )
+
+    def spoof_attack(self, victim_node, target_node):
+        """Executes a spoofing attack by impersonating a node with invalid signatures.
+        
+        Attempts to authenticate as victim_node to target_node using a challenge 
+        signed by the attacker's private key instead of the victim's.
+        """
+        start_time = time.time()
+        
+        # Step 1: Generate attacker-controlled challenge components
+        nonce = self.crypto.generate_nonce()
+        timestamp = time.time()
+        
+        # Step 2: Sign with ATTACKER's private key (Malicious signature)
+        # Replicates _build_auth_message logic: nonce + packed_timestamp
+        message = nonce + struct.pack('d', timestamp)
+        signature = self.crypto.sign(self._attacker_priv, message)
+        
+        # Step 3: Build fake challenge dictionary impersonating the victim
+        challenge = {
+            'node_id': victim_node.node_id,
+            'public_key': victim_node.public_key.hex(),
+            'nonce': nonce.hex(),
+            'timestamp': timestamp,
+            'signature': signature.hex()
+        }
+        
+        logger.info(f"Spoof: Submitting fake challenge (Victim: {victim_node.node_id[:8]}) to {target_node.node_id[:8]}")
+        
+        # Step 4: Submit to target node for verification
+        success, error_reason = target_node.verify_challenge(challenge)
+        
+        detected = not success
+        
+        if not detected:
+            logger.critical(f"SECURITY VIOLATION: Spoofing attack successful! Target accepted fake signature from {victim_node.node_id[:8]}")
+        else:
+            logger.info(f"Spoofing detected correctly: {error_reason}")
+            
+        duration_ms = (time.time() - start_time) * 1000
+        
+        return AttackResult(
+            attack_type="spoof_attack",
             target_node_id=target_node.node_id,
             detected=detected,
             detection_reason=error_reason or "NOT_DETECTED",
