@@ -70,11 +70,17 @@ The `time_sync_window` ($\Delta t$) determines the strictness of the freshness c
 ### 6.1 Trust Edge Weight
 $Weight = 0.5 \times AuthRate + 0.3 \times ProximityScore + 0.2 \times Recency$
 
-### 6.2 Geographic Proximity (Haversine)
-Proximity is calculated using the Great Circle distance ($d$):
-$d = 2r \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta\phi}{2}\right) + \cos\phi_1\cos\phi_2\sin^2\left(\frac{\Delta\lambda}{2}\right)}\right)$
-$Score = \frac{1.0}{1.0 + \frac{d}{500}}$
-Nodes exactly 500m apart yield a score of 0.5.
+### 6.2 Geographic Proximity Model
+Proximity is computed using the **Haversine formula** to determine the great-circle distance ($d$) in meters between two sets of GPS coordinates. This serves as a software simulation of what will ultimately be physical Ultra-Wideband (UWB) radio hardware.
+
+The **Proximity Score** is derived as follows:
+$$Score = \frac{1.0}{1.0 + \frac{d}{500}}$$
+
+*   **Co-located nodes** ($d = 0$): $1.0 / (1.0 + 0) = \mathbf{1.0}$
+*   **Nodes 500m apart**: $1.0 / (1.0 + 1) = \mathbf{0.5}$
+*   **Nodes 2km apart**: $1.0 / (1.0 + 4) = \mathbf{0.2}$
+
+This model allows for a continuous trust gradient based on locality, providing a "geographic anchor" to the cryptographic identity.
 
 ## 7. Security Properties
 - **Post-Quantum Resilience**: Uses ML-DSA-65 (Dilithium3) for all signatures.
@@ -82,6 +88,10 @@ Nodes exactly 500m apart yield a score of 0.5.
 - **Byzantine Resilience**: `AnomalyLogger` automatically quarantines nodes exhibiting malicious behavior.
 
 ## 8. Known Limitations
-- **Shared Clock**: Current simulation assumes a perfectly shared system clock; real-world drift is not yet modeled in the `oqs-env`.
-- **Software-Only**: No hardware-level protection (TPM/HSM) for private keys in Phase 1.
-- **Side-Channel**: The implementation does not protect against power-analysis or timing attacks on the Dilithium sign/verify functions.
+The following limitations apply to the **Phase 1 Orchestrator** and are scheduled for resolution in Phase 2 hardware integration:
+
+-   **Shared System Clock**: Current simulation assumes a perfectly shared system clock across all virtual nodes ($T_{now}$ is global). Physical deployment will require a high-precision PTP/NTP synchronization layer.
+-   **Software-Only Simulation**: No physical device isolation or Trusted Execution Environment (TEE) is enforced. Any vulnerability in the host OS could compromise all "isolated" nodes.
+-   **Simulated Proximity**: Haversine distance is a mathematical approximation and does not account for signal-to-noise ratios (SNR), multi-path interference, or real-world UWB flight-time characteristics.
+-   **Unprotected Communication**: TCP on loopback (127.0.0.1) is used for simulation connectivity and is not battle-hardened for noisy or adversarial radio environments.
+-   **Side-Channel Vulnerability**: The current `liboqs` integration is not hardened against power-analysis, electromagnetic, or timing-based side-channel attacks on the secret Dilithium signing keys.
