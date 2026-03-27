@@ -1,4 +1,4 @@
-oqs-python>=0.10.0
+# oqs-python is installed from GitHub source in the Dockerfile (requires liboqs C lib)
 networkx>=3.0
 flask>=3.0.0
 flask-socketio>=5.3.0
