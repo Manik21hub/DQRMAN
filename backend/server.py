@@ -431,7 +431,7 @@ def post_attack():
 	with emit_lock:
 		socketio.emit('attack_detected', ws_payload)
 
-	return jsonify({'success': True, 'result': attack_payload})
+	return jsonify({'status': 'accepted', 'attack_type': attack_type}), 202
 
 
 @app.post('/api/v1/location')
@@ -539,9 +539,9 @@ def delete_node(node_id):
 
 	return jsonify(
 		{
-			'success': True,
+			'node_id': node_id,
 			'surviving_count': surviving_count,
-			'operational': operational,
+			'is_operational': operational,
 		}
 	)
 
