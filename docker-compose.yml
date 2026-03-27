@@ -1,5 +1,4 @@
 services:
-
   server:
     build: .
     command: python backend/server.py
@@ -8,24 +7,17 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./frontend/vendor/tiles:/app/frontend/vendor/tiles
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     networks:
       - dqrman-net
     environment:
-      PYTHONPATH: /app
-      LOG_LEVEL: INFO
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
 
   node:
     build: .
     command: python run_simulation.py
     depends_on:
-      server:
-        condition: service_healthy
+      - server
     deploy:
       replicas: 5
       resources:
@@ -35,10 +27,10 @@ services:
     networks:
       - dqrman-net
     environment:
-      PYTHONPATH: /app
-      SERVER_URL: http://server:8080
-      NODE_COUNT: "50"
-      LOG_LEVEL: INFO
+      - PYTHONPATH=/app
+      - SERVER_URL=http://server:8080
+      - NODE_COUNT=50
+      - LOG_LEVEL=INFO
 
 networks:
   dqrman-net:

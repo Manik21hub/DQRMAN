@@ -5,6 +5,7 @@ import requests
 import shutil
 import subprocess
 import logging
+import os
 import yaml
 
 
@@ -49,31 +50,29 @@ def main():
         format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     )
 
-    docker_available = shutil.which('docker')
-    if docker_available is None:
-        logging.warning('Docker not found; subprocess isolation is being used as the SRS A-02 fallback.')
+    # Check if server is already running
+    if not wait_for_server(max_attempts=2, delay_seconds=0.5):
+        logging.info("Server not detected. Spawning backend/server.py...")
+        # Use sys.executable to ensure we use the same venv/python
+        env = os.environ.copy()
+        env['PYTHONPATH'] = os.getcwd()
+        server_proc = subprocess.Popen(
+            [sys.executable, "backend/server.py"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=env
+        )
+        # Wait for it to become healthy
+        if not wait_for_server(max_attempts=20, delay_seconds=1):
+            logging.error('Server failed to start or become healthy.')
+            server_proc.terminate()
+            return 1
+        logging.info("Server started successfully.")
+    else:
+        logging.info("Existing server detected. Using current instance.")
 
-    # Keep imported modules intentionally used in this initial scaffold.
-    _ = subprocess
-
-    if args.kill:
-        try:
-            url = f"http://127.0.0.1:8080/api/v1/nodes/{args.kill}"
-            response = requests.delete(url, timeout=5)
-            try:
-                print(response.json())
-            except ValueError:
-                print(response.text)
-        except Exception as e:
-            logging.error(f"Failed to kill node {args.kill}: {e}")
-        return 0
-
-    server_ready = wait_for_server()
-    if not server_ready:
-        logging.error('Server did not become healthy within retry budget.')
-        return 1
-
-    logging.info('Server is healthy. Simulation bootstrap complete.')
+    logging.info('Simulation bootstrap complete.')
 
     try:
         with open(args.config, 'r') as f:
