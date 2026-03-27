@@ -1,0 +1,25 @@
+# Logs and runtime output
+logs/
+*.log
+
+# Test suite — not needed at runtime
+tests/
+
+# Python byte-code caches
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Version control
+.git/
+.gitignore
+
+# Local virtual environments
+venv/
+oqs-env/
+
+# Misc
+.coverage
+.coveragerc
+.pytest_cache/
