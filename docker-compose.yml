@@ -9,10 +9,11 @@ services:
       - ./logs:/app/logs
       - ./frontend/vendor/tiles:/app/frontend/vendor/tiles
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - dqrman-net
     environment:
