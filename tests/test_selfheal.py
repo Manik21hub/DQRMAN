@@ -3,7 +3,7 @@
 import time
 
 from backend.mesh import TrustGraph
-from backend.node import AuthProtocol, Node, NodeState
+from backend.node import AuthProtocol, HeartbeatReceiver, Node, NodeState
 
 
 def _node_id(i):
@@ -139,16 +139,104 @@ def test_rejoin_after_on_node_failure_mesh_accepts_node():
     node.transition_to(NodeState.ACTIVE)
     mesh.add_node(node.node_id, node.public_key)
 
-    mesh.on_node_failure(node.node_id)
-
     old_node_id = node.node_id
-    assert mesh._graph.nodes[old_node_id]['status'] == 'DESTROYED'
+    mesh.on_node_failure(old_node_id)
+
+    # F-04: failed node must be removed from graph and trust table.
+    assert old_node_id not in mesh._graph
+    assert old_node_id not in mesh._trust_table
 
     rejoined = node.rejoin(mesh, neighbours=[])
 
     assert rejoined is True
     assert node.node_id in mesh._graph
     assert mesh._graph.nodes[node.node_id]['status'] == 'ACTIVE'
+
+
+def test_on_node_failure_removes_edges_and_invalidates_cached_routes():
+    mesh = TrustGraph()
+    a, b, c = _node_id(500), _node_id(501), _node_id(502)
+    for i, node_id in enumerate([a, b, c], start=1):
+        mesh.add_node(node_id, _pubkey(500 + i))
+
+    mesh.update_edge(a, b, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    mesh.update_edge(b, c, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+
+    # Warm cache with route through b.
+    assert mesh.compute_trust_path(a, c) == [a, b, c]
+    assert (a, c) in mesh._path_cache
+
+    mesh.on_node_failure(b)
+
+    # Wait until reroute task finishes.
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not mesh._paths_dirty:
+        time.sleep(0.01)
+
+    assert b not in mesh._graph
+    assert b not in mesh._trust_table
+    # No path exists after bridge node removal, and old cache is invalidated.
+    assert mesh.compute_trust_path(a, c) == []
+
+
+def test_partitioned_mesh_keeps_each_partition_operational_after_failure():
+    mesh = TrustGraph()
+    a, b, x, c, d = (_node_id(600), _node_id(601), _node_id(602), _node_id(603), _node_id(604))
+    for i, node_id in enumerate([a, b, x, c, d], start=1):
+        mesh.add_node(node_id, _pubkey(600 + i))
+
+    # Partition 1 internal connectivity
+    mesh.update_edge(a, b, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    mesh.update_edge(b, a, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    # Partition 2 internal connectivity
+    mesh.update_edge(c, d, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    mesh.update_edge(d, c, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    # Single bridge via x
+    mesh.update_edge(b, x, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    mesh.update_edge(x, c, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+
+    # Before failure path exists across bridge.
+    assert mesh.compute_trust_path(a, d)
+
+    mesh.on_node_failure(x)
+
+    # Wait for automatic reroute attempt.
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        # Cross-partition route should not exist.
+        if mesh.compute_trust_path(a, d) == []:
+            break
+        time.sleep(0.02)
+
+    # Partitioned network must continue operating independently.
+    assert mesh.compute_trust_path(a, b) == [a, b]
+    assert mesh.compute_trust_path(c, d) == [c, d]
+    assert mesh.compute_trust_path(a, d) == []
+
+
+def test_heartbeat_timeout_triggers_automatic_self_heal():
+    mesh = TrustGraph()
+    monitor = Node()
+    monitor.transition_to(NodeState.ACTIVE)
+
+    a, b, c = _node_id(700), _node_id(701), _node_id(702)
+    for i, node_id in enumerate([a, b, c], start=1):
+        mesh.add_node(node_id, _pubkey(700 + i))
+
+    # Route a -> b -> c so stale b should break bridge automatically.
+    mesh.update_edge(a, b, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    mesh.update_edge(b, c, auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    assert mesh.compute_trust_path(a, c) == [a, b, c]
+
+    receiver = HeartbeatReceiver(monitor)
+    receiver.last_seen[b] = time.time() - 5.0  # stale
+    receiver.last_seen[a] = time.time()        # fresh
+
+    removed = receiver.self_heal_stale_neighbours(mesh, interval=1.0, timeout=3.0)
+
+    assert b in removed
+    assert b not in mesh._graph
+    assert mesh.compute_trust_path(a, c) == []
 
 
 def test_nfr12_fault_containment():

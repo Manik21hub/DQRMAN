@@ -780,7 +780,7 @@ def heartbeat_sender(node, neighbours, stop_event, interval=None):
                 ts_bytes = struct.pack('d', timestamp)
 
                 # Sign timestamp with node's private key
-                signature = node.crypto.sign(ts_bytes, node.private_key)
+                signature = node.crypto.sign(node._private_key, ts_bytes)
 
                 # Build JSON packet
                 packet = {
@@ -818,13 +818,15 @@ class HeartbeatReceiver:
     simulation for testing network robustness.
     """
 
-    def __init__(self, monitoring_node, host='127.0.0.1', port=10001):
+    def __init__(self, monitoring_node, host='127.0.0.1', port=10001, mesh=None):
         """Initialize heartbeat receiver.
 
         Args:
             monitoring_node: Node instance with trust_table and crypto capability.
             host: Host address to bind UDP socket (default '127.0.0.1').
             port: Port number to bind UDP socket (default 10001).
+            mesh: Optional TrustGraph instance for automatic self-heal when
+                  neighbours become stale.
 
         Returns:
             None.
@@ -835,6 +837,7 @@ class HeartbeatReceiver:
         self.node = monitoring_node
         self.host = host
         self.port = port
+        self.mesh = mesh
         self.socket = None
         self.last_seen = {}
         self.jamming_active = False
@@ -914,7 +917,15 @@ class HeartbeatReceiver:
                         continue
 
                 except socket.timeout:
-                    pass
+                    # On receive timeout, optionally run automatic stale-neighbour healing.
+                    if self.mesh is not None:
+                        hb_interval = _config_value(
+                            getattr(self.node, '_config', {}),
+                            'heartbeat_interval',
+                            1.0,
+                            section='network',
+                        )
+                        self.self_heal_stale_neighbours(self.mesh, interval=hb_interval)
                 except Exception as e:
                     if not stop_event.is_set():
                         logger.error(f'Heartbeat receive error: {e}')
@@ -956,3 +967,36 @@ class HeartbeatReceiver:
                 stale.append(node_id)
 
         return stale
+
+    def self_heal_stale_neighbours(self, mesh, interval, timeout=None):
+        """Auto-remove stale neighbours from mesh based on heartbeat timeout.
+
+        Detects neighbours with stale heartbeats and triggers mesh self-healing
+        by calling mesh.on_node_failure for each stale node. This provides
+        automatic recovery without manual intervention.
+
+        Args:
+            mesh: TrustGraph-like object exposing on_node_failure(node_id).
+            interval: Heartbeat interval in seconds.
+            timeout: Timeout multiplier. If None, defaults to config value
+                     network.heartbeat_timeout (default 3).
+
+        Returns:
+            list: Node IDs removed due to stale heartbeats.
+
+        Raises:
+            None.
+        """
+        stale = self.check_neighbours(interval=interval, timeout=timeout)
+        removed = []
+
+        for node_id in stale:
+            try:
+                if node_id in getattr(mesh, '_graph', {}):
+                    mesh.on_node_failure(node_id)
+                    removed.append(node_id)
+                self.last_seen.pop(node_id, None)
+            except Exception as e:
+                logger.warning(f'Failed self-heal for stale node {node_id[:8]}: {e}')
+
+        return removed

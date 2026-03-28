@@ -554,11 +554,11 @@ class TrustGraph:
             return True
 
     def on_node_failure(self, node_id):
-        """Handle a node failure: mark destroyed, clean cache, trigger reroute.
+        """Handle a node failure: remove node, clean cache, trigger reroute.
 
-        Processes node failure by setting node status to DESTROYED, removing
-        related entries from the path cache, and triggering path recalculation
-        with debounce to handle cascade failures gracefully.
+        Processes node failure by removing the node from the graph and trust
+        table, clearing affected path cache entries, and triggering path
+        recalculation with debounce to handle cascade failures gracefully.
 
         Args:
             node_id: Node identifier that has failed.
@@ -570,9 +570,10 @@ class TrustGraph:
             None.
         """
         with self._lock:
-            # Set node status to destroyed
+            # Remove failed node from graph and trust table.
             if node_id in self._graph:
-                self._graph.nodes[node_id]['status'] = 'DESTROYED'
+                self._graph.remove_node(node_id)
+            self._trust_table.pop(node_id, None)
 
             # Remove path cache entries containing this node
             keys_to_remove = [
@@ -581,6 +582,9 @@ class TrustGraph:
             ]
             for key in keys_to_remove:
                 del self._path_cache[key]
+
+            # Mark paths dirty so routing tables are recalculated automatically.
+            self._paths_dirty = True
 
             # Cancel existing reroute timer only if it is still running.
             if self._reroute_timer and self._reroute_timer.is_alive():
