@@ -7,10 +7,16 @@ To change the algorithm used by the project, update this file only.
 import hashlib
 import secrets
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
 
 try:
+    warnings.filterwarnings(
+        'ignore',
+        message=r'liboqs version \(major, minor\) .* differs from liboqs-python version .*',
+        category=UserWarning,
+    )
     import oqs
     OQS_AVAILABLE = True
 except ImportError:
