@@ -483,16 +483,27 @@ def test_broadcast_join_notifies_neighbour_callback():
 
 
 def test_verify_join_transitions_joining_to_active():
-    sender = Node()
+    sender_1 = Node()
+    sender_2 = Node()
     receiver = Node()
     receiver.state = NodeState.JOINING
 
-    packet = sender.broadcast_join([])
-    success, reason = receiver.verify_join(packet)
+    packet_1 = sender_1.broadcast_join([])
+    success_1, reason_1 = receiver.verify_join(packet_1)
 
-    assert success is True
-    assert reason is None
+    # F-05: One neighbour is not enough for routing rights.
+    assert success_1 is True
+    assert reason_1 is None
+    assert receiver.state == NodeState.JOINING
+    assert receiver.routing_rights_granted is False
+
+    packet_2 = sender_2.broadcast_join([])
+    success_2, reason_2 = receiver.verify_join(packet_2)
+
+    assert success_2 is True
+    assert reason_2 is None
     assert receiver.state == NodeState.ACTIVE
+    assert receiver.routing_rights_granted is True
 
 
 def test_verify_join_malformed_packet_returns_invalid_signature(node_b):
@@ -556,13 +567,121 @@ def test_heartbeat_sender_closes_socket_on_generation_error(monkeypatch):
     class DummyNode:
         node_id = 'a' * 64
         crypto = DummyCrypto()
-        private_key = b'k'
+        _private_key = b'k'
 
     sock = DummySock()
     monkeypatch.setattr(node_mod.socket, 'socket', lambda *_args, **_kwargs: sock)
 
     heartbeat_sender(DummyNode(), [('127.0.0.1', 9999)], OneLoopEvent(), interval=0.0)
     assert sock.closed is True
+
+
+def test_create_signed_message_has_fresh_nonce_each_time():
+    sender = Node()
+
+    p1 = sender.create_signed_message(b'hello', message_type='DATA')
+    p2 = sender.create_signed_message(b'hello', message_type='DATA')
+
+    # F-05: no session token reuse; each message must have fresh signature context.
+    assert p1['nonce'] != p2['nonce']
+    assert p1['signature'] != p2['signature']
+    assert 'session_token' not in p1
+    assert 'cookie' not in p1
+
+
+def test_verify_signed_message_successful_path():
+    sender = Node()
+    receiver = Node()
+
+    packet = sender.create_signed_message(b'payload-1', message_type='DATA')
+    success, payload, reason = receiver.verify_signed_message(packet)
+
+    assert success is True
+    assert payload == b'payload-1'
+    assert reason is None
+
+
+def test_verify_signed_message_invalid_signature_immediate_blacklist_and_isolate():
+    sender = Node()
+    receiver = Node()
+
+    packet = sender.create_signed_message(b'payload-2', message_type='DATA')
+    packet['signature'] = packet['signature'][:-4] + 'abcd'
+
+    success, payload, reason = receiver.verify_signed_message(packet)
+
+    assert success is False
+    assert payload is None
+    assert reason == 'INVALID_SIGNATURE'
+    # F-05: immediate isolation/blacklist when subsequent signature fails.
+    assert sender.node_id in receiver.blacklist
+    assert sender.node_id not in receiver.trust_table
+
+
+def test_apply_blacklist_gossip_propagates_rejections():
+    source = Node()
+    target = Node()
+    bad_id = 'f' * 64
+
+    source.reject_node(bad_id, reason='INVALID_SIGNATURE')
+    gossip_packet = source.build_blacklist_gossip_packet()
+
+    ok, reason = target.apply_blacklist_gossip(gossip_packet)
+
+    assert ok is True
+    assert reason is None
+    assert bad_id in target.blacklist
+    assert target.blacklist_reasons[bad_id] == 'INVALID_SIGNATURE'
+
+
+def test_apply_blacklist_gossip_rejects_tampered_packet():
+    source = Node()
+    target = Node()
+
+    gossip_packet = source.build_blacklist_gossip_packet()
+    gossip_packet['blacklist'] = ['a' * 64]  # tamper after signing
+
+    ok, reason = target.apply_blacklist_gossip(gossip_packet)
+
+    assert ok is False
+    assert reason == 'INVALID_SIGNATURE'
+
+
+def test_gossip_blacklist_propagates_to_multiple_neighbours():
+    source = Node()
+    n1 = Node()
+    n2 = Node()
+
+    blocked_id = 'b' * 64
+    source.reject_node(blocked_id, reason='REPLAY_ATTEMPT')
+
+    accepted = source.gossip_blacklist([n1, n2])
+
+    assert accepted == 2
+    assert blocked_id in n1.blacklist
+    assert blocked_id in n2.blacklist
+
+
+def test_joining_node_cannot_route_without_routing_rights(monkeypatch):
+    node = Node()
+    node.state = NodeState.JOINING
+    node.routing_rights_granted = False
+
+    sent = {'called': False}
+
+    class DummyClient:
+        def __init__(self, host, port):
+            self.host = host
+            self.port = port
+
+        def send_frame(self, frame):
+            sent['called'] = True
+
+    import backend.protocol as protocol_mod
+    monkeypatch.setattr(protocol_mod, 'NodeTCPClient', DummyClient)
+
+    node.send_to_peer('127.0.0.1', 9999, 0x03, b'data')
+    assert sent['called'] is False
 
 
 def test_heartbeat_receiver_listen_updates_last_seen_and_checks_stale(monkeypatch):

@@ -18,6 +18,7 @@ import socket
 import json
 import collections
 import logging
+import base64
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -452,6 +453,11 @@ class Node:
         self._config = config
         self.crypto = crypto
         self.nonce_cache = NonceCache()
+        self.blacklist = set()
+        self.blacklist_reasons = {}
+        self._verified_neighbours = set()
+        # Established standalone nodes may route; rejoin path explicitly revokes until re-verified.
+        self.routing_rights_granted = True
         
         # Initialize TCP server
         self.port = _config_value(config, 'port', 9000, section='server')
@@ -478,6 +484,8 @@ class Node:
                 f'Node {self.node_id[:8]} transitioning from {old_state.name} to {new_state.name}'
             )
             self.state = new_state
+            if new_state == NodeState.JOINING:
+                self.routing_rights_granted = False
     
     def broadcast_join(self, neighbours):
         """Broadcast a signed join packet to satisfy FR-02 neighbour discovery.
@@ -562,14 +570,180 @@ class Node:
             # Signature is valid - add to trust table
             with self._lock:
                 self.trust_table[packet['node_id']] = public_key_bytes
+                self._verified_neighbours.add(packet['node_id'])
                 
-                # Transition to ACTIVE if in JOINING state
-                if self.state == NodeState.JOINING:
+                # F-05: Require at least 2 verified neighbours before routing rights.
+                if self.state == NodeState.JOINING and len(self._verified_neighbours) >= 2:
                     self.state = NodeState.ACTIVE
+                    self.routing_rights_granted = True
+                elif self.state == NodeState.JOINING:
+                    self.routing_rights_granted = False
             
             return (True, None)
         except Exception:
             return (False, 'INVALID_JOIN_SIGNATURE')
+
+    def reject_node(self, node_id, reason='REJECTED_NODE', mesh=None):
+        """Blacklist a node and isolate it from trust/routing immediately.
+
+        Args:
+            node_id: Rejected peer node identifier.
+            reason: Reason for rejection.
+            mesh: Optional mesh graph to quarantine the rejected node.
+
+        Returns:
+            None.
+        """
+        with self._lock:
+            self.blacklist.add(node_id)
+            self.blacklist_reasons[node_id] = reason
+            self.trust_table.pop(node_id, None)
+
+        if mesh is not None:
+            try:
+                mesh.quarantine_node(node_id)
+            except Exception as e:
+                logger.warning(f'Failed to quarantine rejected node {node_id[:8]}: {e}')
+
+    def build_blacklist_gossip_packet(self):
+        """Build signed gossip packet containing local blacklist updates."""
+        payload = {
+            'event_type': 'BLACKLIST_GOSSIP',
+            'sender_id': self.node_id,
+            'sender_pubkey': self.public_key.hex(),
+            'blacklist': sorted(self.blacklist),
+            'reasons': self.blacklist_reasons,
+            'timestamp': time.time(),
+        }
+        message = json.dumps(payload, sort_keys=True).encode('utf-8')
+        signature = self.crypto.sign(self._private_key, message)
+        payload['signature'] = signature.hex()
+        return payload
+
+    def gossip_blacklist(self, neighbours):
+        """Propagate blacklist to neighbours via signed gossip packets.
+
+        Args:
+            neighbours: Iterable of neighbour node-like objects exposing
+                        apply_blacklist_gossip(packet).
+
+        Returns:
+            int: Number of neighbours that accepted the gossip update.
+        """
+        packet = self.build_blacklist_gossip_packet()
+        accepted = 0
+        for neighbour in neighbours:
+            if hasattr(neighbour, 'apply_blacklist_gossip'):
+                ok, _reason = neighbour.apply_blacklist_gossip(packet)
+                if ok:
+                    accepted += 1
+        return accepted
+
+    def apply_blacklist_gossip(self, packet):
+        """Verify and apply a blacklist gossip packet from a peer.
+
+        Returns:
+            tuple: (success: bool, reason: str or None)
+        """
+        try:
+            sender_id = packet['sender_id']
+            sender_pubkey = bytes.fromhex(packet['sender_pubkey'])
+            signature = bytes.fromhex(packet['signature'])
+
+            # Validate sender identity binding.
+            derived_sender = self.crypto.derive_node_id(sender_pubkey)
+            if derived_sender != sender_id:
+                return (False, 'KEY_BINDING_MISMATCH')
+
+            # Verify sender signature over payload without signature field.
+            unsigned_packet = dict(packet)
+            unsigned_packet.pop('signature', None)
+            message = json.dumps(unsigned_packet, sort_keys=True).encode('utf-8')
+            if not self.crypto.verify(sender_pubkey, message, signature):
+                return (False, 'INVALID_SIGNATURE')
+
+            # Apply blacklist entries.
+            incoming_blacklist = packet.get('blacklist', [])
+            incoming_reasons = packet.get('reasons', {})
+            with self._lock:
+                for node_id in incoming_blacklist:
+                    self.blacklist.add(node_id)
+                    if node_id in incoming_reasons:
+                        self.blacklist_reasons[node_id] = incoming_reasons[node_id]
+                    self.trust_table.pop(node_id, None)
+
+            return (True, None)
+        except Exception:
+            return (False, 'INVALID_GOSSIP_PACKET')
+
+    def create_signed_message(self, payload, message_type='DATA'):
+        """Create a signed per-message packet (no session token model).
+
+        Every packet has a fresh nonce and timestamp and must be verified
+        independently to satisfy continuous authentication.
+        """
+        nonce = self.crypto.generate_nonce()
+        timestamp = time.time()
+        payload_bytes = payload if isinstance(payload, bytes) else str(payload).encode('utf-8')
+
+        message = nonce + struct.pack('d', timestamp) + payload_bytes
+        signature = self.crypto.sign(self._private_key, message)
+
+        return {
+            'type': message_type,
+            'node_id': self.node_id,
+            'public_key': self.public_key.hex(),
+            'nonce': nonce.hex(),
+            'timestamp': timestamp,
+            'payload_b64': base64.b64encode(payload_bytes).decode('ascii'),
+            'signature': signature.hex(),
+        }
+
+    def verify_signed_message(self, packet, mesh=None):
+        """Verify a signed per-message packet and isolate failures immediately.
+
+        Returns:
+            tuple: (success: bool, payload: bytes or None, reason: str or None)
+        """
+        try:
+            sender_id = packet['node_id']
+            if sender_id in self.blacklist:
+                return (False, None, 'BLACKLISTED_NODE')
+
+            sender_pubkey = bytes.fromhex(packet['public_key'])
+            nonce = bytes.fromhex(packet['nonce'])
+            timestamp = float(packet['timestamp'])
+            payload_bytes = base64.b64decode(packet['payload_b64'])
+            signature = bytes.fromhex(packet['signature'])
+
+            # Identity binding check.
+            derived_sender = self.crypto.derive_node_id(sender_pubkey)
+            if derived_sender != sender_id:
+                self.reject_node(sender_id, reason='KEY_BINDING_MISMATCH', mesh=mesh)
+                return (False, None, 'KEY_BINDING_MISMATCH')
+
+            # Timestamp freshness check.
+            time_sync_window = _config_value(self._config, 'time_sync_window', 5.0, section='network')
+            if abs(time.time() - timestamp) > time_sync_window:
+                self.reject_node(sender_id, reason='TIMESTAMP_EXPIRED', mesh=mesh)
+                return (False, None, 'TIMESTAMP_EXPIRED')
+
+            # Replay check.
+            if self.nonce_cache.contains(nonce):
+                self.reject_node(sender_id, reason='DUPLICATE_NONCE', mesh=mesh)
+                return (False, None, 'DUPLICATE_NONCE')
+
+            # Signature verification.
+            message = nonce + struct.pack('d', timestamp) + payload_bytes
+            if not self.crypto.verify(sender_pubkey, message, signature):
+                # F-05: immediate isolate on subsequent signature failure.
+                self.reject_node(sender_id, reason='INVALID_SIGNATURE', mesh=mesh)
+                return (False, None, 'INVALID_SIGNATURE')
+
+            self.nonce_cache.add(nonce, time_sync_window)
+            return (True, payload_bytes, None)
+        except Exception:
+            return (False, None, 'INVALID_MESSAGE_PACKET')
     
     def create_challenge(self):
         """Create a signed authentication challenge for peer verification.
@@ -668,6 +842,8 @@ class Node:
         self.node_id = self.crypto.derive_node_id(self.public_key)
         self.nonce_cache = NonceCache()
         self.state = NodeState.UNVERIFIED
+        self._verified_neighbours = set()
+        self.routing_rights_granted = False
 
         mesh.add_node(self.node_id, self.public_key)
         self.broadcast_join(neighbours)
@@ -730,12 +906,24 @@ class Node:
         """
         from backend.protocol import pack_frame, NodeTCPClient
 
+        # F-05: Joining nodes must not gain routing rights until sufficiently verified.
+        if self.state == NodeState.JOINING and not self.routing_rights_granted:
+            logger.warning(
+                f'Routing blocked for joining node {self.node_id[:8]} until 2 neighbour verifications'
+            )
+            return
+
         try:
-            # Sign the payload with this node's private key
-            signature = self.crypto.sign(self._private_key, payload)
+            # F-05: every message carries fresh per-message context.
+            nonce = self.crypto.generate_nonce()
+            ts = time.time()
+            signed_payload = nonce + struct.pack('d', ts) + payload
+
+            # Sign payload + freshness context.
+            signature = self.crypto.sign(self._private_key, signed_payload)
 
             # Pack the frame with message type, sender node_id, payload, and signature
-            frame = pack_frame(message_type, self.node_id, payload, signature)
+            frame = pack_frame(message_type, self.node_id, signed_payload, signature)
 
             # Send frame via TCP client
             client = NodeTCPClient(host, port)
@@ -906,6 +1094,8 @@ class HeartbeatReceiver:
                         # Verify signature
                         if not self.node.crypto.verify(public_key, ts_bytes, signature_bytes):
                             logger.warning(f'Heartbeat signature invalid from {sender_id[:8]}')
+                            # F-05: immediate isolation on invalid subsequent signature.
+                            self.node.reject_node(sender_id, reason='INVALID_HEARTBEAT_SIGNATURE', mesh=self.mesh)
                             continue
 
                         # Update last_seen
