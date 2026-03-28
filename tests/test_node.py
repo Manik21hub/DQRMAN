@@ -198,6 +198,80 @@ def test_key_substitution_attack_prevention(node_a, node_b):
     assert reason == 'KEY_BINDING_MISMATCH', f"Wrong rejection reason: {reason}"
 
 
+def test_verify_challenge_rejects_known_peer_key_mismatch_without_blacklisting_victim(node_a, node_b):
+    """Known peer identity must reject alternate key material (F-08)."""
+    from backend.node import _build_auth_message
+
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
+
+    # node_b already trusts node_a's key material.
+    node_b.trust_table[node_a.node_id] = node_a.public_key
+
+    attacker = Node()
+    nonce = attacker.crypto.generate_nonce()
+    timestamp = time.time()
+    forged_message = _build_auth_message(nonce, timestamp)
+    forged_signature = attacker.crypto.sign(attacker._private_key, forged_message)
+
+    forged_challenge = {
+        'node_id': node_a.node_id,
+        'public_key': attacker.public_key.hex(),
+        'nonce': nonce.hex(),
+        'timestamp': timestamp,
+        'signature': forged_signature.hex(),
+    }
+
+    success, reason = node_b.verify_challenge(forged_challenge)
+    assert success is False
+    assert reason == 'KNOWN_PEER_KEY_MISMATCH'
+    assert node_a.node_id not in node_b.blacklist
+
+
+def test_verify_challenge_rate_limits_and_blacklists_repeated_spoof_attempts():
+    """Repeated spoof attempts from same forged key are rate-limited and blacklisted."""
+    from backend.node import _build_auth_message
+
+    cfg = {
+        'security': {
+            'auth_failure_threshold': 3,
+            'auth_failure_window': 30.0,
+        }
+    }
+    victim = Node(cfg)
+    verifier = Node(cfg)
+    attacker = Node(cfg)
+
+    victim.transition_to(NodeState.ACTIVE)
+    verifier.transition_to(NodeState.ACTIVE)
+    attacker.transition_to(NodeState.ACTIVE)
+
+    verifier.trust_table[victim.node_id] = victim.public_key
+
+    results = []
+    for _ in range(3):
+        nonce = attacker.crypto.generate_nonce()
+        timestamp = time.time()
+        forged_message = _build_auth_message(nonce, timestamp)
+        forged_signature = attacker.crypto.sign(attacker._private_key, forged_message)
+        forged_challenge = {
+            'node_id': victim.node_id,
+            'public_key': attacker.public_key.hex(),
+            'nonce': nonce.hex(),
+            'timestamp': timestamp,
+            'signature': forged_signature.hex(),
+        }
+        success, reason = verifier.verify_challenge(forged_challenge)
+        results.append((success, reason))
+
+    assert results[0] == (False, 'KNOWN_PEER_KEY_MISMATCH')
+    assert results[1] == (False, 'KNOWN_PEER_KEY_MISMATCH')
+    assert results[2] == (False, 'RATE_LIMITED')
+    assert attacker.node_id in verifier.blacklist
+    assert verifier.blacklist_reasons[attacker.node_id] == 'RATE_LIMITED_KNOWN_PEER_KEY_MISMATCH'
+    assert victim.node_id not in verifier.blacklist
+
+
 def test_broadcast_join_and_verify(node_a, node_b):
     """Test join broadcast and verification workflow.
     

@@ -455,6 +455,7 @@ class Node:
         self.nonce_cache = NonceCache()
         self.blacklist = set()
         self.blacklist_reasons = {}
+        self._auth_failures = collections.defaultdict(collections.deque)
         self._verified_neighbours = set()
         # Established standalone nodes may route; rejoin path explicitly revokes until re-verified.
         self.routing_rights_granted = True
@@ -604,6 +605,35 @@ class Node:
                 mesh.quarantine_node(node_id)
             except Exception as e:
                 logger.warning(f'Failed to quarantine rejected node {node_id[:8]}: {e}')
+
+    def _record_auth_failure(self, failure_key, offending_node_id, reason, mesh=None):
+        """Track repeated auth failures and escalate to blacklist/rate-limit when needed.
+
+        Args:
+            failure_key: Stable key grouping related failures.
+            offending_node_id: Optional node ID to blacklist when threshold is reached.
+            reason: Failure reason string.
+            mesh: Optional mesh graph for quarantine propagation.
+
+        Returns:
+            bool: True when threshold was reached and rate limiting should apply.
+        """
+        now = time.time()
+        window = float(_config_value(self._config, 'auth_failure_window', 30.0, section='security'))
+        threshold = int(_config_value(self._config, 'auth_failure_threshold', 3, section='security'))
+
+        failures = self._auth_failures[failure_key]
+        failures.append(now)
+
+        while failures and (now - failures[0]) > window:
+            failures.popleft()
+
+        if len(failures) < threshold:
+            return False
+
+        if offending_node_id:
+            self.reject_node(offending_node_id, reason=f'RATE_LIMITED_{reason}', mesh=mesh)
+        return True
 
     def build_blacklist_gossip_packet(self):
         """Build signed gossip packet containing local blacklist updates."""
@@ -793,6 +823,10 @@ class Node:
         # Step 1: Check state
         if self.state in (NodeState.QUARANTINED, NodeState.DESTROYED, NodeState.UNVERIFIED):
             return (False, self.state.name)
+
+        claimed_node_id = challenge.get('node_id')
+        if claimed_node_id in self.blacklist:
+            return (False, 'BLACKLISTED_NODE')
         
         # Step 2: Check timestamp freshness
         now = time.time()
@@ -809,15 +843,48 @@ class Node:
         message = nonce_bytes + struct.pack('d', challenge['timestamp'])
         public_key_bytes = bytes.fromhex(challenge['public_key'])
         signature_bytes = bytes.fromhex(challenge['signature'])
+        derived_node_id = self.crypto.derive_node_id(public_key_bytes)
+
+        # F-08: If this is a known peer, key material must match previously trusted identity.
+        expected_public_key = self.trust_table.get(claimed_node_id)
+        if expected_public_key is not None and expected_public_key != public_key_bytes:
+            failure_key = f'known-peer-mismatch:{claimed_node_id}:{derived_node_id}'
+            limited = self._record_auth_failure(
+                failure_key,
+                offending_node_id=derived_node_id,
+                reason='KNOWN_PEER_KEY_MISMATCH',
+            )
+            if limited:
+                return (False, 'RATE_LIMITED')
+            return (False, 'KNOWN_PEER_KEY_MISMATCH')
         
         if not self.crypto.verify(public_key_bytes, message, signature_bytes):
+            # Do not blacklist a known peer identity on bare signature failures; spoofed packets
+            # can replay a trusted identity tuple and would otherwise cause false isolation.
+            offender_for_limit = derived_node_id if expected_public_key is None else None
+            if offender_for_limit is not None:
+                failure_key = f'invalid-signature:{claimed_node_id}:{derived_node_id}'
+                limited = self._record_auth_failure(
+                    failure_key,
+                    offending_node_id=offender_for_limit,
+                    reason='INVALID_SIGNATURE',
+                )
+                if limited:
+                    return (False, 'RATE_LIMITED')
             return (False, 'INVALID_SIGNATURE')
         
         # Step 4b: KEY BINDING VALIDATION - Prevent key substitution attacks per F-02
         # Requirement: Node B checks that the public key matches the expected Node ID.
         # Derive node_id from provided public_key and verify it matches the claimed node_id.
-        derived_node_id = self.crypto.derive_node_id(public_key_bytes)
-        if derived_node_id != challenge['node_id']:
+        if derived_node_id != claimed_node_id:
+            failure_key = f'key-binding-mismatch:{claimed_node_id}:{derived_node_id}'
+            limited = self._record_auth_failure(
+                failure_key,
+                offending_node_id=derived_node_id,
+                reason='KEY_BINDING_MISMATCH',
+            )
+            if limited:
+                return (False, 'RATE_LIMITED')
             return (False, 'KEY_BINDING_MISMATCH')
         
         # Step 5: Add nonce to cache
