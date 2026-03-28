@@ -244,25 +244,43 @@
 
       let currentNodes = [];
       let currentEdges = [];
+      let currentStats = null;
       let mapViewedOnce = false;
 
       function updateStats() {
-        const activeCount = (currentNodes || []).filter(n => n.status === 'ACTIVE').length;
-        const destroyedCount = (currentNodes || []).filter(n => n.status === 'DESTROYED').length;
-        const isOperational = currentNodes.length > 0 && (activeCount / currentNodes.length) >= 0.2;
+        const computedActive = (currentNodes || []).filter(n => n.status === 'ACTIVE').length;
+        const computedDestroyed = (currentNodes || []).filter(n => n.status === 'DESTROYED').length;
 
-        document.getElementById('active-count').textContent = `Active: ${activeCount}`;
-        document.getElementById('destroyed-count').textContent = `Destroyed: ${destroyedCount}`;
+        const activeCount = Number.isFinite(currentStats?.active_nodes) ? currentStats.active_nodes : computedActive;
+        const destroyedCount = Number.isFinite(currentStats?.destroyed_nodes) ? currentStats.destroyed_nodes : computedDestroyed;
+        const totalNodes = Number.isFinite(currentStats?.total_nodes)
+          ? currentStats.total_nodes
+          : Math.max(activeCount + destroyedCount, 1);
+        const destroyedPercent = Number.isFinite(currentStats?.destroyed_percent)
+          ? currentStats.destroyed_percent
+          : (destroyedCount / totalNodes) * 100;
+        const meshStatus = String(currentStats?.mesh_status || 'OPERATIONAL').toUpperCase();
 
+        document.getElementById('active-count').textContent = `${activeCount}`;
+        document.getElementById('destroyed-count').textContent = `${destroyedCount} (${Math.round(destroyedPercent)}%)`;
+
+        const opDot = document.getElementById('operational-dot');
         const opSpan = document.getElementById('operational-status');
-        if (isOperational) {
-          opSpan.textContent = 'Operational: YES';
+        if (meshStatus === 'OPERATIONAL') {
+          opSpan.textContent = 'STATUS: OPERATIONAL';
           opSpan.style.color = '#22c55e';
+          opDot.style.background = '#22c55e';
           opSpan.style.fontWeight = 'normal';
+        } else if (meshStatus === 'DEGRADED') {
+          opSpan.textContent = 'STATUS: DEGRADED';
+          opSpan.style.color = '#f59e0b';
+          opDot.style.background = '#f59e0b';
+          opSpan.style.fontWeight = '600';
         } else {
-          opSpan.textContent = 'Operational: NO';
+          opSpan.textContent = 'STATUS: PARTITIONED';
           opSpan.style.color = '#ef4444';
-          opSpan.style.fontWeight = 'bold';
+          opDot.style.background = '#ef4444';
+          opSpan.style.fontWeight = '700';
         }
       }
 
@@ -366,6 +384,7 @@
           if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
             currentNodes = data.nodes;
             currentEdges = data.edges;
+            currentStats = (data.stats && typeof data.stats === 'object') ? data.stats : null;
           }
 
           // Update D3 visualization
@@ -443,13 +462,26 @@
               const destroyedNodeId = event.destroyed_node_id || (event.payload && event.payload.node_id);
               const oldEdgeKeys = [];
 
+              const oldEdges = Array.isArray(event.old_edges) ? event.old_edges : [];
+              if (oldEdges.length > 0) {
+                oldEdges.forEach(edge => {
+                  const sourceId = typeof edge.source === 'object' ? (edge.source.node_id || edge.source.id) : edge.source;
+                  const targetId = typeof edge.target === 'object' ? (edge.target.node_id || edge.target.id) : edge.target;
+                  if (sourceId && targetId) {
+                    oldEdgeKeys.push(`${sourceId}--${targetId}`);
+                  }
+                });
+              }
+
               // Find all edges connected to the destroyed node
-              Object.keys(map._edges).forEach(key => {
-                const [source, target] = key.split('--');
-                if (source === destroyedNodeId || target === destroyedNodeId) {
-                  oldEdgeKeys.push(key);
-                }
-              });
+              if (oldEdgeKeys.length === 0) {
+                Object.keys(map._edges).forEach(key => {
+                  const [source, target] = key.split('--');
+                  if (source === destroyedNodeId || target === destroyedNodeId) {
+                    oldEdgeKeys.push(key);
+                  }
+                });
+              }
 
               // Build node position lookup
               const nodeLatLonMap = {};
@@ -463,11 +495,22 @@
               });
 
               // Extract new edges from event if available
-              const newEdges = event.new_edges || [];
+              const newEdges = Array.isArray(event.new_edges) ? event.new_edges : [];
 
               // Trigger self-healing animation on map
               if (oldEdgeKeys.length > 0 || newEdges.length > 0) {
                 map.showSelfHeal(destroyedNodeId, oldEdgeKeys, newEdges, nodeLatLonMap);
+              }
+
+              // Optional reroute preview path from backend to make healing visually explicit.
+              const reroutePath = (event.payload && Array.isArray(event.payload.reroute_path))
+                ? event.payload.reroute_path
+                : (Array.isArray(event.reroute_path) ? event.reroute_path : []);
+              if (reroutePath.length >= 2) {
+                mesh.highlightPath(reroutePath, 1900);
+                if (window._meshMap) {
+                  window._meshMap.highlightPath(reroutePath, 1900);
+                }
               }
             }
 

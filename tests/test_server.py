@@ -53,13 +53,24 @@ def test_nodes_api_includes_lat_lon(mock_server):
     
     assert response.status_code == 200
     
-    nodes_payload = response.get_json()
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert 'nodes' in body
+    assert 'stats' in body
+
+    nodes_payload = body['nodes']
     assert isinstance(nodes_payload, list)
     assert len(nodes_payload) == 3  # The mock mesh has 3 nodes
     
     for node in nodes_payload:
         assert 'lat' in node, "Node object missing 'lat' attribute"
         assert 'lon' in node, "Node object missing 'lon' attribute"
+
+    stats = body['stats']
+    assert stats['total_nodes'] == 3
+    assert stats['active_nodes'] == 3
+    assert stats['destroyed_nodes'] == 0
+    assert stats['mesh_status'] == 'OPERATIONAL'
 
 
 def test_flush_emits_current_topology_with_events(monkeypatch):
@@ -139,3 +150,71 @@ def test_replay_attack_endpoint_emits_and_queues_detection_event(mock_server, mo
     queued = server_mod.pending_events[-1]
     assert queued['event_type'] == server_mod.EVENT_REPLAY_DETECTED
     assert queued['detection_reason'] == 'TIMESTAMP_EXPIRED'
+
+
+def test_delete_node_endpoint_returns_f09_status_and_reroute_metadata(mock_server):
+    """Node kill endpoint should return status counters and reroute preview for F-09 demo."""
+    # Ensure simple chain so a reroute path can still be computed after one kill.
+    server_mod.mesh.update_edge('node-001', 'node-002', auth_rate=0.9, proximity_score=1.0, recency=1.0)
+    server_mod.mesh.update_edge('node-002', 'node-003', auth_rate=0.9, proximity_score=1.0, recency=1.0)
+
+    response = mock_server.delete('/api/v1/nodes/node-002')
+    assert response.status_code == 200
+    body = response.get_json()
+
+    assert body['node_id'] == 'node-002'
+    assert body['surviving_count'] == 2
+    assert body['total_nodes'] == 3
+    assert body['destroyed_count'] == 1
+    assert body['destroyed_percent'] == pytest.approx(33.3, abs=0.2)
+    assert body['mesh_status'] in {'DEGRADED', 'PARTITIONED'}
+    assert isinstance(body['reroute_path'], list)
+
+
+def test_delete_node_queues_destroy_event_with_heal_payload(mock_server):
+    """Queued destroy event should include edge transition metadata for self-heal animation."""
+    server_mod.pending_events.clear()
+    server_mod.mesh.update_edge('node-001', 'node-002', auth_rate=0.9, proximity_score=1.0, recency=1.0)
+
+    response = mock_server.delete('/api/v1/nodes/node-001')
+    assert response.status_code == 200
+
+    destroy_events = [evt for evt in server_mod.pending_events if evt.get('event_type') == 'NODE_DESTROYED']
+    assert destroy_events, 'Expected NODE_DESTROYED event queued for mesh_state updates'
+    event = destroy_events[-1]
+
+    assert event.get('destroyed_node_id') == 'node-001'
+    assert isinstance(event.get('old_edges'), list)
+    assert isinstance(event.get('new_edges'), list)
+    assert 'payload' in event
+    assert 'mesh_status' in event['payload']
+    assert 'destroyed_percent' in event['payload']
+
+
+def test_delete_node_attempts_docker_stop_when_enabled(mock_server, monkeypatch):
+    """When configured, node destroy should attempt docker stop for mapped container."""
+
+    class _Done:
+        returncode = 0
+        stderr = ''
+
+    def fake_run(cmd, capture_output, text, check, timeout):
+        assert cmd[:2] == ['docker', 'stop']
+        assert cmd[2] == 'container-node-003'
+        return _Done()
+
+    monkeypatch.setattr(server_mod.subprocess, 'run', fake_run)
+    server_mod.APP_CONFIG['docker'] = {
+        'stop_on_destroy': True,
+        'node_container_map': {'node-003': 'container-node-003'},
+    }
+
+    try:
+        response = mock_server.delete('/api/v1/nodes/node-003')
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['docker']['attempted'] is True
+        assert body['docker']['stopped'] is True
+        assert body['docker']['container_name'] == 'container-node-003'
+    finally:
+        server_mod.APP_CONFIG.pop('docker', None)

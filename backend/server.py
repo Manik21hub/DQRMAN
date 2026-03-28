@@ -13,7 +13,9 @@ import time
 import datetime
 import threading
 import os
+import subprocess
 import requests
+import networkx as nx
 from backend.mesh import TrustGraph
 
 EVENT_AUTH_SUCCESS = 'EVENT_AUTH_SUCCESS'
@@ -27,6 +29,7 @@ EVENT_ANOMALY_ALERT = 'EVENT_ANOMALY_ALERT'
 EVENT_MESH_DEGRADED = 'EVENT_MESH_DEGRADED'
 EVENT_LOCATION_UPDATED = 'EVENT_LOCATION_UPDATED'
 EVENT_ROUTE_PATH = 'EVENT_ROUTE_PATH'
+EVENT_NODE_PURGED = 'EVENT_NODE_PURGED'
 
 app = Flask(__name__)
 CORS(app)
@@ -40,12 +43,17 @@ pending_events = []
 flush_timer = None
 mesh = None
 ALLOWED_ATTACK_TYPES = {'replay', 'spoof', 'jamming'}
-APP_CONFIG = {'log_file': os.getenv('DQRMAN_LOG_FILE', 'logs/events.log')}
+APP_CONFIG = {
+	'log_file': os.getenv('DQRMAN_LOG_FILE', 'logs/events.log'),
+	'destroyed_node_visible_seconds': 1.5,
+}
 LOG_FILE_PATH = pathlib.Path(APP_CONFIG['log_file'])
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / 'frontend'
 FRONTEND_VENDOR_DIR = FRONTEND_DIR / 'vendor'
 TILES_CACHE_DIR = FRONTEND_VENDOR_DIR / 'tiles'
 log_write_lock = threading.Lock()
+tombstone_lock = threading.Lock()
+destroyed_tombstones = {}
 
 
 class JSONFormatter(logging.Formatter):
@@ -118,6 +126,14 @@ def _current_mesh_state():
 		return {
 			'nodes': [],
 			'edges': [],
+			'stats': {
+				'total_nodes': 0,
+				'active_nodes': 0,
+				'destroyed_nodes': 0,
+				'destroyed_percent': 0.0,
+				'is_operational': True,
+				'mesh_status': 'OPERATIONAL',
+			},
 			'events': [],
 		}
 
@@ -126,14 +142,183 @@ def _current_mesh_state():
 	return {
 		'nodes': nodes,
 		'edges': edges,
+		'stats': _mesh_stats(),
 		'events': [],
 	}
+
+
+def _purge_expired_tombstones(now=None):
+	"""Remove expired destroyed-node tombstones from temporary UI cache."""
+	if now is None:
+		now = time.time()
+
+	with tombstone_lock:
+		expired_ids = [
+			node_id for node_id, record in destroyed_tombstones.items()
+			if record.get('expires_at', 0.0) <= now
+		]
+		for node_id in expired_ids:
+			del destroyed_tombstones[node_id]
+
+
+def _schedule_tombstone_purge(node_id, delay_seconds):
+	"""Schedule a mesh_state refresh when destroyed-node tombstone visibility expires."""
+
+	def _expire_and_emit():
+		_purge_expired_tombstones()
+		queue_event(
+			{
+				'event_type': EVENT_NODE_PURGED,
+				'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+				'payload': {'node_id': node_id},
+			}
+		)
+
+	timer = threading.Timer(delay_seconds, _expire_and_emit)
+	timer.daemon = True
+	timer.start()
+
+
+def _register_destroyed_tombstone(node_id, attrs):
+	"""Store a short-lived DESTROYED node snapshot so UI can render red before purge."""
+	ttl = float(APP_CONFIG.get('destroyed_node_visible_seconds', 1.5))
+	now = time.time()
+	record = {
+		'node_id': node_id,
+		'status': 'DESTROYED',
+		'trust_score': attrs.get('trust_score', 0.0),
+		'lat': attrs.get('lat'),
+		'lon': attrs.get('lon'),
+		'joined_at': attrs.get('joined_at'),
+		'expires_at': now + max(0.1, ttl),
+	}
+	with tombstone_lock:
+		destroyed_tombstones[node_id] = record
+
+	_schedule_tombstone_purge(node_id, max(0.1, ttl))
+
+
+def _mesh_stats():
+	"""Build consolidated mesh counters for UI status widgets."""
+	if mesh is None:
+		return {
+			'total_nodes': 0,
+			'active_nodes': 0,
+			'destroyed_nodes': 0,
+			'destroyed_percent': 0.0,
+			'is_operational': True,
+			'mesh_status': 'OPERATIONAL',
+		}
+
+	_purge_expired_tombstones()
+	active_nodes = mesh.get_active_nodes()
+	active_count = len(active_nodes)
+	base_total = int(getattr(mesh, '_original_node_count', 0) or 0)
+	if base_total <= 0:
+		base_total = active_count
+	destroyed_count = max(0, base_total - active_count)
+	destroyed_percent = (float(destroyed_count) / float(base_total) * 100.0) if base_total else 0.0
+	is_operational = mesh.is_operational()
+
+	mesh_status = 'OPERATIONAL'
+	if active_count <= 1 or not is_operational:
+		mesh_status = 'PARTITIONED'
+	elif destroyed_count > 0:
+		active_subgraph = mesh._graph.subgraph(active_nodes)
+		component_count = 0
+		if active_subgraph.number_of_nodes() > 0:
+			component_count = nx.number_weakly_connected_components(active_subgraph)
+		if component_count > 1:
+			mesh_status = 'PARTITIONED'
+		else:
+			mesh_status = 'DEGRADED'
+
+	return {
+		'total_nodes': base_total,
+		'active_nodes': active_count,
+		'destroyed_nodes': destroyed_count,
+		'destroyed_percent': round(destroyed_percent, 1),
+		'is_operational': bool(is_operational),
+		'mesh_status': mesh_status,
+	}
+
+
+def _compute_reroute_preview_path():
+	"""Compute one representative trust path to highlight post-healing reroute."""
+	if mesh is None:
+		return []
+
+	active_nodes = mesh.get_active_nodes()
+	if len(active_nodes) < 2:
+		return []
+
+	for source in active_nodes:
+		for target in active_nodes:
+			if source == target:
+				continue
+			path = mesh.compute_trust_path(source, target)
+			if path and len(path) >= 2:
+				return path
+	return []
+
+
+def _stop_node_container(node_id):
+	"""Optionally stop a Docker container mapped to the destroyed node.
+
+	Returns:
+		dict: {'attempted': bool, 'stopped': bool, 'container_name': str or None, 'error': str or None}
+	"""
+	docker_cfg = APP_CONFIG.get('docker', {}) if isinstance(APP_CONFIG, dict) else {}
+	if not isinstance(docker_cfg, dict) or not docker_cfg.get('stop_on_destroy', False):
+		return {
+			'attempted': False,
+			'stopped': False,
+			'container_name': None,
+			'error': None,
+		}
+
+	container_map = docker_cfg.get('node_container_map', {})
+	if isinstance(container_map, dict) and node_id in container_map:
+		container_name = container_map[node_id]
+	else:
+		container_name = str(node_id)
+
+	try:
+		completed = subprocess.run(
+			['docker', 'stop', container_name],
+			capture_output=True,
+			text=True,
+			check=False,
+			timeout=8,
+		)
+		if completed.returncode == 0:
+			return {
+				'attempted': True,
+				'stopped': True,
+				'container_name': container_name,
+				'error': None,
+			}
+		stderr = (completed.stderr or '').strip()
+		return {
+			'attempted': True,
+			'stopped': False,
+			'container_name': container_name,
+			'error': stderr or f'docker stop exited {completed.returncode}',
+		}
+	except Exception as exc:
+		return {
+			'attempted': True,
+			'stopped': False,
+			'container_name': container_name,
+			'error': str(exc),
+		}
 
 
 def _serialize_nodes():
 	"""Convert mesh node attributes to API payload format."""
 	if mesh is None:
 		return []
+	_purge_expired_tombstones()
 
 	nodes = []
 	for node_id, attrs in mesh._graph.nodes(data=True):
@@ -147,6 +332,19 @@ def _serialize_nodes():
 				'joined_at': attrs.get('joined_at'),
 			}
 		)
+
+	with tombstone_lock:
+		for record in destroyed_tombstones.values():
+			nodes.append(
+				{
+					'node_id': record.get('node_id'),
+					'status': 'DESTROYED',
+					'trust_score': record.get('trust_score', 0.0),
+					'lat': record.get('lat'),
+					'lon': record.get('lon'),
+					'joined_at': record.get('joined_at'),
+				}
+			)
 	return nodes
 
 
@@ -176,12 +374,14 @@ def on_connect():
 
 def emit_mesh_update(nodes, edges, events):
 	"""Emit mesh state updates with the standard websocket schema."""
+	stats = _mesh_stats()
 	message = {
 		'event_type': 'mesh_state',
 		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
 		'payload': {
 			'nodes': nodes,
 			'edges': edges,
+			'stats': stats,
 			'events': events,
 		},
 	}
@@ -234,7 +434,7 @@ def list_nodes():
 	Implements:
 		FR-01/FR-02 operational topology visibility for mesh participants.
 	"""
-	return jsonify(_serialize_nodes())
+	return jsonify({'nodes': _serialize_nodes(), 'stats': _mesh_stats()})
 
 
 @app.get('/health')
@@ -539,21 +739,49 @@ def delete_node(node_id):
 	if node_id not in mesh._graph:
 		return jsonify({'error': 'NODE_NOT_FOUND'}), 404
 
+	# Capture local topology snapshot to drive visual self-heal transitions in the UI.
+	destroyed_attrs = dict(mesh._graph.nodes[node_id])
+	docker_result = _stop_node_container(node_id)
+	old_edges = [
+		{'source': src, 'target': dst, 'weight': attrs.get('weight')}
+		for src, dst, attrs in mesh._graph.edges(data=True)
+		if src == node_id or dst == node_id
+	]
+
 	mesh.on_node_failure(node_id)
-	surviving_count = len(mesh.get_active_nodes())
-	operational = mesh.is_operational()
+	_register_destroyed_tombstone(node_id, destroyed_attrs)
+
+	stats = _mesh_stats()
+	reroute_path = _compute_reroute_preview_path()
+	new_edges = _serialize_edges()
 	event = {
 		'event_type': 'NODE_DESTROYED',
 		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
-		'payload': {'node_id': node_id},
+		'destroyed_node_id': node_id,
+		'old_edges': old_edges,
+		'new_edges': new_edges,
+		'reroute_path': reroute_path,
+		'payload': {
+			'node_id': node_id,
+			'mesh_status': stats['mesh_status'],
+			'destroyed_percent': stats['destroyed_percent'],
+			'reroute_path': reroute_path,
+			'docker': docker_result,
+		},
 	}
 	queue_event(event)
 
 	return jsonify(
 		{
 			'node_id': node_id,
-			'surviving_count': surviving_count,
-			'is_operational': operational,
+			'surviving_count': stats['active_nodes'],
+			'is_operational': stats['is_operational'],
+			'mesh_status': stats['mesh_status'],
+			'destroyed_percent': stats['destroyed_percent'],
+			'destroyed_count': stats['destroyed_nodes'],
+			'total_nodes': stats['total_nodes'],
+			'reroute_path': reroute_path,
+			'docker': docker_result,
 		}
 	)
 

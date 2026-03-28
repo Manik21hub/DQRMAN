@@ -47,6 +47,7 @@ class MeshSocket {
       this.onMessage({
         nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
         edges: Array.isArray(payload.edges) ? payload.edges : [],
+        stats: payload && typeof payload.stats === 'object' ? payload.stats : null,
         events: Array.isArray(payload.events) ? payload.events : [],
         _latency_ms: latencyMs,
       });
