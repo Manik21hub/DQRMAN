@@ -1,4 +1,4 @@
-.PHONY: install test test-attacks test-scale lint run demo docker-up docker-down clean cache-tiles help
+.PHONY: install test test-attacks test-scale benchmark-scale lint run demo docker-up docker-down clean cache-tiles help
 
 help:
 	@echo "Available targets:"
@@ -6,6 +6,7 @@ help:
 	@echo "  test         - Run all tests with verbose coverage"
 	@echo "  test-attacks - Run attack tests with -s flag"
 	@echo "  test-scale   - Run scale tests"
+	@echo "  benchmark-scale - Run F-10 scale benchmark (50 nodes)"
 	@echo "  lint         - Run flake8 with max line length 100"
 	@echo "  run          - Start server and simulation with 10 nodes"
 	@echo "  demo         - Run the demo script"
@@ -25,6 +26,9 @@ test-attacks:
 
 test-scale:
 	pytest tests/test_scale.py -s -v
+
+benchmark-scale:
+	python scripts/scale_benchmark.py --nodes 50 --output logs/f10_scale_report.json
 
 lint:
 	flake8 . --max-line-length=100
