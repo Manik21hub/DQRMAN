@@ -367,6 +367,46 @@ class AuthProtocol:
         log_auth_event(result)
         return result
 
+    def update_mesh_trust(self, auth_result, mesh):
+        """Update mesh trust scores based on authentication result.
+
+        Refreshes trust scores in the mesh graph based on successful or failed
+        authentication between two nodes. This enables the mesh to prefer routing
+        through nodes that consistently authenticate successfully.
+
+        Args:
+            auth_result: Dictionary from authenticate() with 'success', 'node_a_id', 'node_b_id'.
+            mesh: TrustGraph instance to update (optional, returns early if None).
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        if mesh is None:
+            return
+
+        try:
+            success = auth_result.get('success', False)
+            node_a_id = auth_result.get('node_a_id')
+            node_b_id = auth_result.get('node_b_id')
+
+            if not all([node_a_id, node_b_id]):
+                return
+
+            # Update trust in both directions (mutual authentication)
+            mesh.refresh_trust_score(node_a_id, node_b_id, auth_success=success)
+            mesh.refresh_trust_score(node_b_id, node_a_id, auth_success=success)
+
+            logger.info(
+                f'Mesh trust updated: {node_a_id[:8]} ↔ {node_b_id[:8]} '
+                f'{"✓" if success else "✗"}'
+            )
+
+        except Exception as e:
+            logger.error(f'Error updating mesh trust: {e}')
+
 
 class Node:
     """Represents a node in the DQRMAN distributed mesh network.

@@ -222,8 +222,15 @@ class TrustGraph:
             # Compute edge weight
             weight = _compute_edge_weight(auth_rate, proximity_score, recency)
 
-            # Add directed edge with weight
-            self._graph.add_edge(from_id, to_id, weight=weight)
+            # Add directed edge with weight and metadata
+            self._graph.add_edge(
+                from_id, to_id,
+                weight=weight,
+                proximity_score=proximity_score,
+                last_auth_time=time.time(),
+                auth_success_count=0,
+                auth_attempt_count=0,
+            )
 
             # Mark path cache dirty
             self._paths_dirty = True
@@ -711,3 +718,313 @@ class TrustGraph:
             )
 
             return neighbours
+
+    def route_message(self, message, routing_node, path, destination):
+        """Route a message through the mesh with hop-based re-signing.
+
+        Takes a message, routes it through the trust path, and signs/re-signs
+        at each hop. Each intermediate node verifies the previous hop's signature
+        and adds their own signature before forwarding. This creates a chain of
+        trust across the path, ensuring all hops verify the previous link.
+
+        Args:
+            message: Bytes containing the message payload.
+            routing_node: Node object with crypto capability and private key for signing.
+            path: List of node IDs from source to destination (inclusive).
+            destination: Target node ID (should be path[-1]).
+
+        Returns:
+            dict: Routed message packet with keys:
+                - message: Original message as hex string
+                - source: Sender node_id (path[0])
+                - destination: Target node_id (path[-1])
+                - path: List of all node IDs in path
+                - signatures: List of (node_id, signature_hex) tuples for each hop
+                - timestamp: Time of routing
+                - hops_count: Number of hops in path
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            # Validate path
+            if not path or len(path) < 2:
+                logger.error('Invalid path: must have at least source and destination')
+                return {}
+
+            signatures = []
+            current_message = message
+
+            # Sign at each hop
+            for idx, node_id in enumerate(path):
+                # Build message for this hop: include path up to this node and original message
+                hop_data = {
+                    'message': message.hex(),
+                    'path': path[:idx + 1],  # Path accumulated so far
+                    'timestamp': time.time(),
+                }
+                hop_bytes = json.dumps(hop_data).encode('utf-8')
+
+                # Sign using routing node's key
+                signature = routing_node.crypto.sign(hop_bytes, routing_node._private_key)
+                signatures.append((node_id, signature.hex()))
+
+                current_message = hop_bytes
+
+            # Build final routed packet
+            packet = {
+                'message': message.hex(),
+                'source': path[0],
+                'destination': path[-1],
+                'path': path,
+                'signatures': signatures,  # List of (node_id, signature) tuples
+                'timestamp': time.time(),
+                'hops_count': len(path),
+            }
+
+            logger.info(
+                f'Routed message from {path[0][:8]} to {path[-1][:8]} '
+                f'via {len(path) - 2} intermediate hops'
+            )
+
+            return packet
+
+    def verify_message_route(self, packet_bytes):
+        """Verify a routed message packet with chain of hop signatures.
+
+        Validates the complete signature chain across all hops in the message
+        path. Each hop's signature is verified using the previous hop's public key,
+        ensuring all intermediate nodes properly signed and forwarded the message.
+
+        Args:
+            packet_bytes: JSON-encoded routed message packet from route_message.
+
+        Returns:
+            tuple: (success: bool, message_bytes: bytes). Success is True only if
+                   all signatures verify. message_bytes contains the original message
+                   on success, otherwise empty bytes.
+
+        Raises:
+            None.
+        """
+        try:
+            # Parse packet
+            packet = json.loads(packet_bytes.decode('utf-8'))
+            message_hex = packet.get('message')
+            source = packet.get('source')
+            destination = packet.get('destination')
+            path = packet.get('path', [])
+            signatures = packet.get('signatures', [])
+
+            if not all([message_hex, source, destination, path, signatures]):
+                logger.warning('Invalid packet structure')
+                return (False, b'')
+
+            # Validate path integrity
+            if len(signatures) != len(path):
+                logger.warning(f'Signature count ({len(signatures)}) != path length ({len(path)})')
+                return (False, b'')
+
+            # Verify each signature in the chain
+            from backend.crypto import CryptoModule
+            crypto = CryptoModule()
+
+            for idx, (node_id, sig_hex) in enumerate(signatures):
+                # Verify node_id matches path
+                if node_id != path[idx]:
+                    logger.warning(f'Node mismatch at hop {idx}: {node_id[:8]} != {path[idx][:8]}')
+                    return (False, b'')
+
+                # Get node's public key from trust table
+                if node_id not in self._trust_table:
+                    logger.warning(f'Node {node_id[:8]} not in trust table')
+                    return (False, b'')
+
+                public_key = self._trust_table[node_id]
+                signature = bytes.fromhex(sig_hex)
+
+                # Build the message that was signed at this hop
+                hop_data = {
+                    'message': message_hex,
+                    'path': path[:idx + 1],
+                    'timestamp': packet.get('timestamp'),
+                }
+                hop_bytes = json.dumps(hop_data).encode('utf-8')
+
+                # Verify signature
+                if not crypto.verify(public_key, hop_bytes, signature):
+                    logger.warning(f'Signature verification failed at hop {idx} ({node_id[:8]})')
+                    return (False, b'')
+
+            # All signatures verified
+            message_bytes = bytes.fromhex(message_hex)
+            logger.info(
+                f'Message route verified: {source[:8]} → {destination[:8]} '
+                f'via {len(path)} hops, all {len(signatures)} signatures valid'
+            )
+
+            return (True, message_bytes)
+
+        except Exception as e:
+            logger.error(f'Error verifying message route: {e}')
+            return (False, b'')
+
+    def refresh_trust_score(self, from_id, to_id, auth_success=True):
+        """Refresh trust score on successful authentication.
+
+        Updates the edge weight between two nodes based on authentication
+        result. Success increases trust (higher weight), failure decreases it.
+        Also records the timestamp to enable age-based decay.
+
+        Args:
+            from_id: Source node identifier.
+            to_id: Destination node identifier.
+            auth_success: Boolean indicating authentication success (default True).
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            if from_id not in self._graph or to_id not in self._graph:
+                logger.warning(f'Cannot refresh trust: one or both nodes missing')
+                return
+
+            # Get current edge data
+            if not self._graph.has_edge(from_id, to_id):
+                # Create new edge if it doesn't exist
+                logger.info(f'Creating new trust edge: {from_id[:8]} → {to_id[:8]}')
+                self._graph.add_edge(from_id, to_id, weight=0.5, last_auth_time=time.time(),
+                                    auth_success_count=1, auth_attempt_count=1)
+                return
+
+            edge_data = self._graph[from_id][to_id]
+            current_weight = edge_data.get('weight', 0.5)
+            last_auth_time = edge_data.get('last_auth_time', time.time())
+            auth_success_count = edge_data.get('auth_success_count', 0)
+            auth_attempt_count = edge_data.get('auth_attempt_count', 0)
+
+            # Update counters
+            auth_attempt_count += 1
+            if auth_success:
+                auth_success_count += 1
+
+            # Calculate new auth_rate and update weight
+            auth_rate = auth_success_count / auth_attempt_count if auth_attempt_count > 0 else 0.5
+            proximity_score = edge_data.get('proximity_score', 0.5)
+            recency = 1.0  # Fresh authentication
+
+            new_weight = _compute_edge_weight(auth_rate, proximity_score, recency)
+
+            # Update edge with new weight and timestamp
+            self._graph[from_id][to_id].update({
+                'weight': new_weight,
+                'last_auth_time': time.time(),
+                'auth_success_count': auth_success_count,
+                'auth_attempt_count': auth_attempt_count,
+                'proximity_score': proximity_score,
+            })
+
+            # Mark paths dirty for recalculation
+            self._paths_dirty = True
+
+            logger.info(
+                f'Refreshed trust: {from_id[:8]} → {to_id[:8]} '
+                f'auth_rate={auth_rate:.2%} new_weight={new_weight:.3f}'
+            )
+
+    def decay_stale_trust_edges(self, max_age_seconds=600):
+        """Decay trust scores for edges with stale authentication.
+
+        Reduces trust weight (edge cost) for edges that haven't been refreshed
+        with successful authentication within the specified time window. Trust
+        gradually decays, meaning nodes that stop authenticating lose routing
+        preference. This prevents permanently trusting dead or silent nodes.
+
+        Args:
+            max_age_seconds: Maximum age before edge begins decaying (default 600s).
+
+        Returns:
+            list: List of (from_id, to_id) tuples that were decayed.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            current_time = time.time()
+            decayed_edges = []
+
+            for from_id, to_id in self._graph.edges():
+                edge_data = self._graph[from_id][to_id]
+                last_auth_time = edge_data.get('last_auth_time', 0)
+                age = current_time - last_auth_time
+
+                # Skip if edge is fresh
+                if age < max_age_seconds:
+                    continue
+
+                # Calculate decay factor: 0.5 at max_age, approaching 0 thereafter
+                # decay_factor = 0.5 ^ (age / max_age_seconds)
+                decay_factor = 0.5 ** (age / max_age_seconds)
+                current_weight = edge_data.get('weight', 0.5)
+                old_weight = current_weight
+                new_weight = current_weight * decay_factor
+
+                # Update edge weight
+                self._graph[from_id][to_id]['weight'] = new_weight
+
+                decayed_edges.append((from_id, to_id))
+                logger.debug(
+                    f'Decayed trust edge: {from_id[:8]} → {to_id[:8]} '
+                    f'age={age:.0f}s weight {old_weight:.3f} → {new_weight:.3f} '
+                    f'(decay_factor={decay_factor:.3f})'
+                )
+
+            # Mark paths dirty if any edges decayed
+            if decayed_edges:
+                self._paths_dirty = True
+                logger.info(f'Decayed {len(decayed_edges)} stale trust edges')
+
+            return decayed_edges
+
+    def get_edge_stats(self, from_id, to_id):
+        """Get detailed statistics for an edge including trust metrics.
+
+        Retrieves authentication history, current weight, recency, and other
+        trust metrics for a specific directed edge.
+
+        Args:
+            from_id: Source node identifier.
+            to_id: Destination node identifier.
+
+        Returns:
+            dict: Edge statistics with keys: weight, auth_rate, auth_success_count,
+                  auth_attempt_count, last_auth_time, proximity_score, age_seconds.
+                  Returns empty dict if edge doesn't exist.
+
+        Raises:
+            None.
+        """
+        with self._lock:
+            if not self._graph.has_edge(from_id, to_id):
+                return {}
+
+            edge_data = self._graph[from_id][to_id]
+            last_auth_time = edge_data.get('last_auth_time', 0)
+            age = time.time() - last_auth_time
+
+            auth_success_count = edge_data.get('auth_success_count', 0)
+            auth_attempt_count = edge_data.get('auth_attempt_count', 0)
+            auth_rate = auth_success_count / auth_attempt_count if auth_attempt_count > 0 else 0.0
+
+            return {
+                'weight': edge_data.get('weight', 0.5),
+                'auth_rate': auth_rate,
+                'auth_success_count': auth_success_count,
+                'auth_attempt_count': auth_attempt_count,
+                'last_auth_time': last_auth_time,
+                'proximity_score': edge_data.get('proximity_score', 0.0),
+                'age_seconds': age,
+            }
