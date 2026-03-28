@@ -39,7 +39,7 @@ class MeshVisualizer {
       QUARANTINED: '#F97316',
       HEALING: '#00BFFF',
       ISOLATED: '#8B5CF6',
-      INITIALIZING: '#FACC15'
+      UNVERIFIED: '#FACC15'
     };
 
     this.simulation = d3

@@ -39,7 +39,7 @@ Nodes transition through seven lifecycle states to ensure mesh stability and Byz
 
 | State | Entry Condition | Exit Condition |
 | :--- | :--- | :--- |
-| **INITIALIZING** | Process start; keypair generation. | Successful socket bind / init completion. |
+| **UNVERIFIED** | Process start; keypair generation. | Successful socket bind / init completion. |
 | **JOINING** | Broadcast of signed Join packet. | Receipt of valid Join response. |
 | **ACTIVE** | Trust verified; heartbeat exchange active. | Heartbeat timeout or detected anomaly. |
 | **HEALING** | Detected transient packet loss (1-2 misses). | Re-synchronization or transition to Isolated. |

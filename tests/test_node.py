@@ -36,7 +36,7 @@ def test_node_initialization():
     Validates:
     - node_id is 64-character hexadecimal string
     - public_key is 1952 bytes (ML-DSA-65)
-    - state is INITIALIZING
+    - state is UNVERIFIED
     """
     fresh_node = Node()
     
@@ -48,8 +48,12 @@ def test_node_initialization():
     assert isinstance(fresh_node.public_key, bytes)
     assert len(fresh_node.public_key) == 1952
     
-    # Should start in INITIALIZING state
-    assert fresh_node.state == NodeState.INITIALIZING
+    # Should start in UNVERIFIED state
+    assert fresh_node.state == NodeState.UNVERIFIED
+    
+    # Needs to initialize structural spatial coordinates per F-01
+    assert hasattr(fresh_node, 'lat')
+    assert hasattr(fresh_node, 'lon')
 
 
 def test_authenticate_success(node_a, node_b):

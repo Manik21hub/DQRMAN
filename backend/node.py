@@ -88,7 +88,7 @@ class NodeState(enum.Enum):
     States are ordered by typical progression: initialization → cluster membership →
     active operation → potential degradation → quarantine → termination.
     """
-    INITIALIZING = enum.auto()
+    UNVERIFIED = enum.auto()
     JOINING = enum.auto()
     ACTIVE = enum.auto()
     HEALING = enum.auto()
@@ -403,7 +403,9 @@ class Node:
         
         self.public_key, self._private_key = crypto.generate_keypair()
         self.node_id = crypto.derive_node_id(self.public_key)
-        self.state = NodeState.INITIALIZING
+        self.state = NodeState.UNVERIFIED
+        self.lat = float(_config_value(config, 'lat', 0.0, section='location'))
+        self.lon = float(_config_value(config, 'lon', 0.0, section='location'))
         self.trust_table = {}
         self._lock = threading.Lock()
         self._algorithm = algorithm
@@ -575,7 +577,7 @@ class Node:
             None.
         """
         # Step 1: Check state
-        if self.state in (NodeState.QUARANTINED, NodeState.DESTROYED, NodeState.INITIALIZING):
+        if self.state in (NodeState.QUARANTINED, NodeState.DESTROYED, NodeState.UNVERIFIED):
             return (False, self.state.name)
         
         # Step 2: Check timestamp freshness
@@ -618,7 +620,7 @@ class Node:
         self.public_key, self._private_key = self.crypto.generate_keypair()
         self.node_id = self.crypto.derive_node_id(self.public_key)
         self.nonce_cache = NonceCache()
-        self.state = NodeState.INITIALIZING
+        self.state = NodeState.UNVERIFIED
 
         mesh.add_node(self.node_id, self.public_key)
         self.broadcast_join(neighbours)
