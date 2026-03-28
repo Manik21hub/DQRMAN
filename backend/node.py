@@ -599,6 +599,13 @@ class Node:
         if not self.crypto.verify(public_key_bytes, message, signature_bytes):
             return (False, 'INVALID_SIGNATURE')
         
+        # Step 4b: KEY BINDING VALIDATION - Prevent key substitution attacks per F-02
+        # Requirement: Node B checks that the public key matches the expected Node ID.
+        # Derive node_id from provided public_key and verify it matches the claimed node_id.
+        derived_node_id = self.crypto.derive_node_id(public_key_bytes)
+        if derived_node_id != challenge['node_id']:
+            return (False, 'KEY_BINDING_MISMATCH')
+        
         # Step 5: Add nonce to cache
         self.nonce_cache.add(nonce_bytes, time_sync_window)
         

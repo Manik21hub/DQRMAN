@@ -150,6 +150,54 @@ def test_verify_challenge_quarantined_state(node_a, node_b):
     assert reason == 'QUARANTINED'
 
 
+def test_key_substitution_attack_prevention(node_a, node_b):
+    """Test that key substitution attacks are prevented per F-02 requirement.
+    
+    Requirement: Node B checks that the public key matches the expected Node ID
+    (prevents key substitution attacks).
+    
+    Validates:
+    - Legitimate challenge from node_a is accepted
+    - Forged challenge claiming node_a but with attacker's key is rejected
+    - Rejection reason is 'KEY_BINDING_MISMATCH'
+    - This prevents attackers from impersonating nodes with their own keys
+    """
+    from backend.crypto import CryptoModule
+    from backend.node import _build_auth_message
+    import time as time_module
+    
+    node_a.transition_to(NodeState.ACTIVE)
+    node_b.transition_to(NodeState.ACTIVE)
+    
+    # Verify that legitimate challenge passes
+    legitimate_challenge = node_a.create_challenge()
+    success, reason = node_b.verify_challenge(legitimate_challenge)
+    assert success is True, f"Legitimate challenge failed: {reason}"
+    
+    # Create attacker with separate cryptographic identity
+    attacker_crypto = CryptoModule()
+    attacker_pub_key, attacker_priv_key = attacker_crypto.generate_keypair()
+    
+    # Build forged challenge: claim to be node_a but use attacker's public key
+    nonce = attacker_crypto.generate_nonce()
+    timestamp = time_module.time()
+    message = _build_auth_message(nonce, timestamp)
+    signature = attacker_crypto.sign(attacker_priv_key, message)
+    
+    forged_challenge = {
+        'node_id': node_a.node_id,  # Claim to be node_a
+        'public_key': attacker_pub_key.hex(),  # But provide attacker's key
+        'nonce': nonce.hex(),
+        'timestamp': timestamp,
+        'signature': signature.hex()
+    }
+    
+    # Verify that forged challenge is rejected
+    success, reason = node_b.verify_challenge(forged_challenge)
+    assert success is False, "Key substitution attack was not prevented!"
+    assert reason == 'KEY_BINDING_MISMATCH', f"Wrong rejection reason: {reason}"
+
+
 def test_broadcast_join_and_verify(node_a, node_b):
     """Test join broadcast and verification workflow.
     
@@ -174,6 +222,7 @@ def test_broadcast_join_and_verify(node_a, node_b):
     assert reason is None
     # node_a should be in trust_table
     assert node_a.node_id in node_b.trust_table
+
 
 
 def test_invalid_join_signature(node_a, node_b):
