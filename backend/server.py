@@ -45,7 +45,17 @@ mesh = None
 ALLOWED_ATTACK_TYPES = {'replay', 'spoof', 'jamming'}
 APP_CONFIG = {
 	'log_file': os.getenv('DQRMAN_LOG_FILE', 'logs/events.log'),
+	'scale_report_file': os.getenv('DQRMAN_SCALE_REPORT_FILE', 'logs/f10_scale_report.json'),
 	'destroyed_node_visible_seconds': 1.5,
+}
+SIMULATION_RUNTIME = {
+	'running': True,
+	'config': {
+		'node_count': 10,
+		'center_lat': 28.6139,
+		'center_lon': 77.2090,
+		'spread_m': 500,
+	},
 }
 LOG_FILE_PATH = pathlib.Path(APP_CONFIG['log_file'])
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / 'frontend'
@@ -241,6 +251,57 @@ def _mesh_stats():
 		'is_operational': bool(is_operational),
 		'mesh_status': mesh_status,
 	}
+
+
+def _normalize_simulation_config(data):
+	"""Normalize simulation config payload from frontend into server runtime shape."""
+	data = data or {}
+
+	node_count = data.get('node_count', data.get('nodeCount', SIMULATION_RUNTIME['config'].get('node_count', 10)))
+	center_lat = data.get('center_lat', data.get('centerLat', SIMULATION_RUNTIME['config'].get('center_lat', 28.6139)))
+	center_lon = data.get('center_lon', data.get('centerLon', SIMULATION_RUNTIME['config'].get('center_lon', 77.2090)))
+	spread_m = data.get('spread_m', data.get('spreadM', data.get('accuracy', SIMULATION_RUNTIME['config'].get('spread_m', 500))))
+
+	try:
+		node_count = max(1, int(node_count))
+	except (TypeError, ValueError):
+		node_count = 10
+
+	try:
+		center_lat = float(center_lat)
+	except (TypeError, ValueError):
+		center_lat = 28.6139
+
+	try:
+		center_lon = float(center_lon)
+	except (TypeError, ValueError):
+		center_lon = 77.2090
+
+	try:
+		spread_m = max(50.0, float(spread_m))
+	except (TypeError, ValueError):
+		spread_m = 500.0
+
+	return {
+		'node_count': node_count,
+		'center_lat': center_lat,
+		'center_lon': center_lon,
+		'spread_m': spread_m,
+	}
+
+
+def _rebuild_mesh_from_runtime_config():
+	"""Reinitialize in-memory mesh from simulation runtime config and emit fresh state."""
+	global mesh
+	cfg = SIMULATION_RUNTIME['config']
+	_init_mesh(int(cfg.get('node_count', 10)))
+	mesh.scatter_nodes_geographically(
+		float(cfg.get('center_lat', 28.6139)),
+		float(cfg.get('center_lon', 77.2090)),
+		spread_m=float(cfg.get('spread_m', 500)),
+	)
+	state = _current_mesh_state()
+	emit_mesh_update(state['nodes'], state['edges'], [])
 
 
 def _compute_reroute_preview_path():
@@ -573,6 +634,109 @@ def list_events():
 	return jsonify(events)
 
 
+@app.get('/api/v1/scale-report')
+def get_scale_report():
+	"""GET /api/v1/scale-report.
+
+	Returns JSON:
+		On success: Parsed benchmark JSON from configured scale report file.
+		If missing: {'error': 'SCALE_REPORT_NOT_FOUND'} with HTTP 404.
+		If invalid JSON: {'error': 'SCALE_REPORT_INVALID'} with HTTP 500.
+
+	Implements:
+		F-10 frontend visibility for latest scale benchmark results.
+	"""
+	report_path = pathlib.Path(APP_CONFIG.get('scale_report_file', 'logs/f10_scale_report.json'))
+	if not report_path.exists():
+		return jsonify({'error': 'SCALE_REPORT_NOT_FOUND'}), 404
+
+	try:
+		with report_path.open('r', encoding='utf-8') as handle:
+			report = json.load(handle)
+	except json.JSONDecodeError:
+		return jsonify({'error': 'SCALE_REPORT_INVALID'}), 500
+	return jsonify(report)
+
+
+@app.get('/api/v1/simulation/config')
+def get_simulation_config():
+	"""GET /api/v1/simulation/config.
+
+	Returns JSON:
+		Current runtime simulation config and running flag.
+	"""
+	return jsonify(
+		{
+			'running': bool(SIMULATION_RUNTIME.get('running', False)),
+			'config': dict(SIMULATION_RUNTIME.get('config', {})),
+		}
+	)
+
+
+@app.post('/api/v1/simulation/config')
+def post_simulation_config():
+	"""POST /api/v1/simulation/config.
+
+	Accepts JSON:
+		Simulation configuration payload from frontend setup controls.
+
+	Returns JSON:
+		Normalized persisted runtime config.
+	"""
+	data = request.get_json(silent=True) or {}
+	normalized = _normalize_simulation_config(data)
+	SIMULATION_RUNTIME['config'] = normalized
+
+	log_event('SIMULATION_CONFIG_UPDATED', normalized)
+	return jsonify({'success': True, 'config': normalized})
+
+
+@app.post('/api/v1/simulation/start')
+def post_simulation_start():
+	"""POST /api/v1/simulation/start.
+
+	Accepts JSON:
+		Optional simulation config override payload.
+
+	Returns JSON:
+		Running flag, active node count, and effective config.
+	"""
+	data = request.get_json(silent=True) or {}
+	if data:
+		SIMULATION_RUNTIME['config'] = _normalize_simulation_config(data)
+
+	SIMULATION_RUNTIME['running'] = True
+	_rebuild_mesh_from_runtime_config()
+	stats = _mesh_stats()
+
+	log_event('SIMULATION_STARTED', {'config': SIMULATION_RUNTIME['config'], 'active_nodes': stats['active_nodes']})
+	return jsonify(
+		{
+			'success': True,
+			'running': True,
+			'active_nodes': stats['active_nodes'],
+			'config': dict(SIMULATION_RUNTIME['config']),
+		}
+	)
+
+
+@app.post('/api/v1/simulation/stop')
+def post_simulation_stop():
+	"""POST /api/v1/simulation/stop.
+
+	Returns JSON:
+		Running flag set to false and mesh snapshot cleared.
+	"""
+	global mesh
+	SIMULATION_RUNTIME['running'] = False
+	mesh = None
+	destroyed_tombstones.clear()
+	emit_mesh_update([], [], [])
+
+	log_event('SIMULATION_STOPPED', {})
+	return jsonify({'success': True, 'running': False})
+
+
 @app.post('/api/v1/attack')
 def post_attack():
 	"""POST /api/v1/attack.
@@ -902,6 +1066,8 @@ def main():
 	args = parser.parse_args()
 
 	_configure_logging(args.log_level)
+	SIMULATION_RUNTIME['config']['node_count'] = int(args.nodes)
+	SIMULATION_RUNTIME['running'] = True
 	_init_mesh(args.nodes)
 
 	if args.kill_node_id:

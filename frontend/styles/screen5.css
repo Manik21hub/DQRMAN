@@ -1,0 +1,81 @@
+#node-sidebar {
+  position: absolute;
+  top: 88px;
+  right: 320px;
+  width: 440px;
+  max-width: calc(100vw - 360px);
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  background: var(--white);
+  border: 1px solid var(--platinum);
+  border-radius: 12px;
+  padding: 12px;
+  z-index: 700;
+  display: none;
+}
+
+#node-sidebar.open {
+  display: block;
+}
+
+.sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-id-block {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.status-square {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+#node-sidebar .actions {
+  display: flex;
+  gap: 6px;
+}
+
+.metric-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metric-tile {
+  border: 1px solid var(--platinum);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg);
+}
+
+#node-mini-map {
+  margin-top: 12px;
+  height: 96px;
+  border: 1px solid var(--platinum);
+  border-radius: 8px;
+}
+
+.sidebar-section {
+  margin-top: 12px;
+}
+
+.compact-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.compact-table th,
+.compact-table td {
+  border-bottom: 1px solid var(--platinum);
+  padding: 6px;
+  text-align: left;
+}

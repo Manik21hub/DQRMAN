@@ -1,0 +1,81 @@
+#screen-events { flex-direction: column; }
+
+.log-toolbar {
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--c2);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.log-search {
+  background: var(--c3);
+  border: 1px solid var(--border-hi);
+  color: var(--pearl);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 6px 11px;
+  outline: none;
+  width: 240px;
+}
+.log-search:focus { border-color: var(--ok); }
+
+.lfbtn {
+  background: var(--c3);
+  border: 1px solid var(--border-hi);
+  color: var(--plat-dark);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 6px 11px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: all 0.15s;
+}
+.lfbtn.active[data-filter='all'] { background: var(--ok-d); border-color: var(--ok); color: var(--ok); }
+.lfbtn.active[data-filter='auth'] { background: var(--ok-d); border-color: var(--ok); color: var(--ok); }
+.lfbtn.active[data-filter='warn'] { background: var(--warn-d); border-color: var(--warn); color: var(--warn); }
+.lfbtn.active[data-filter='replay'] { background: var(--err-d); border-color: var(--err); color: var(--err); }
+.lfbtn.active[data-filter='info'] { background: var(--info-d); border-color: var(--info); color: var(--info); }
+
+.log-cnt { margin-left: auto; font-size: 9.5px; font-family: var(--font-mono); color: var(--pearl-faint); }
+.log-wrap { flex: 1; overflow-y: auto; }
+
+table.ltable { width: 100%; border-collapse: collapse; }
+.ltable th {
+  position: sticky;
+  top: 0;
+  background: var(--c3);
+  padding: 7px 14px;
+  text-align: left;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--plat-dark);
+  border-bottom: 1px solid var(--border-hi);
+  white-space: nowrap;
+}
+.ltable td {
+  padding: 8px 14px;
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.ltable tr:hover td { background: var(--c3); }
+
+.lsev {
+  display: inline-block;
+  padding: 2px 5px;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.lsev.ok { background: var(--ok-d); color: var(--ok); }
+.lsev.warn { background: var(--warn-d); color: var(--warn); }
+.lsev.err { background: var(--err-d); color: var(--err); }
+.lsev.info { background: var(--info-d); color: var(--info); }

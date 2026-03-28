@@ -218,3 +218,96 @@ def test_delete_node_attempts_docker_stop_when_enabled(mock_server, monkeypatch)
         assert body['docker']['container_name'] == 'container-node-003'
     finally:
         server_mod.APP_CONFIG.pop('docker', None)
+
+
+def test_scale_report_endpoint_returns_report_json(mock_server, tmp_path):
+    """Scale report endpoint should expose benchmark JSON for frontend F-10 screen."""
+    report_path = tmp_path / 'f10_scale_report.json'
+    report_path.write_text('{"feature":"F-10","pass":true}', encoding='utf-8')
+
+    original = server_mod.APP_CONFIG.get('scale_report_file')
+    server_mod.APP_CONFIG['scale_report_file'] = str(report_path)
+    try:
+        response = mock_server.get('/api/v1/scale-report')
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['feature'] == 'F-10'
+        assert body['pass'] is True
+    finally:
+        if original is None:
+            server_mod.APP_CONFIG.pop('scale_report_file', None)
+        else:
+            server_mod.APP_CONFIG['scale_report_file'] = original
+
+
+def test_scale_report_endpoint_missing_returns_404(mock_server):
+    """Scale report endpoint should return a clear error when report file is absent."""
+    original = server_mod.APP_CONFIG.get('scale_report_file')
+    server_mod.APP_CONFIG['scale_report_file'] = 'logs/does-not-exist-f10-report.json'
+    try:
+        response = mock_server.get('/api/v1/scale-report')
+        assert response.status_code == 404
+        body = response.get_json()
+        assert body['error'] == 'SCALE_REPORT_NOT_FOUND'
+    finally:
+        if original is None:
+            server_mod.APP_CONFIG.pop('scale_report_file', None)
+        else:
+            server_mod.APP_CONFIG['scale_report_file'] = original
+
+
+def test_simulation_config_endpoint_normalizes_payload(mock_server):
+    """Simulation config endpoint should accept camelCase and persist normalized values."""
+    response = mock_server.post(
+        '/api/v1/simulation/config',
+        json={
+            'nodeCount': '7',
+            'centerLat': '28.55',
+            'centerLon': '77.33',
+            'spreadM': '320',
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['success'] is True
+    assert body['config']['node_count'] == 7
+    assert body['config']['center_lat'] == pytest.approx(28.55)
+    assert body['config']['center_lon'] == pytest.approx(77.33)
+    assert body['config']['spread_m'] == pytest.approx(320.0)
+
+    read_back = mock_server.get('/api/v1/simulation/config')
+    assert read_back.status_code == 200
+    read_body = read_back.get_json()
+    assert read_body['config']['node_count'] == 7
+
+
+def test_simulation_start_stop_endpoints_toggle_runtime_and_mesh(mock_server):
+    """Simulation start/stop should rebuild then clear mesh state for setup workflow."""
+    start_response = mock_server.post(
+        '/api/v1/simulation/start',
+        json={'node_count': 4, 'center_lat': 28.61, 'center_lon': 77.20, 'spread_m': 250},
+    )
+    assert start_response.status_code == 200
+    start_body = start_response.get_json()
+    assert start_body['success'] is True
+    assert start_body['running'] is True
+    assert start_body['active_nodes'] == 4
+
+    nodes_response = mock_server.get('/api/v1/nodes')
+    assert nodes_response.status_code == 200
+    nodes_body = nodes_response.get_json()
+    assert nodes_body['stats']['active_nodes'] == 4
+    active_nodes = [node for node in nodes_body['nodes'] if node.get('status') != 'DESTROYED']
+    assert len(active_nodes) == 4
+
+    stop_response = mock_server.post('/api/v1/simulation/stop', json={})
+    assert stop_response.status_code == 200
+    stop_body = stop_response.get_json()
+    assert stop_body['success'] is True
+    assert stop_body['running'] is False
+
+    nodes_after_stop = mock_server.get('/api/v1/nodes')
+    assert nodes_after_stop.status_code == 200
+    after_body = nodes_after_stop.get_json()
+    assert after_body['stats']['active_nodes'] == 0
+    assert after_body['nodes'] == []

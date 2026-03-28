@@ -1,0 +1,47 @@
+:root {
+  --pearl: #eae7df;
+  --pearl-dim: #b4b2ab;
+  --pearl-faint: #6e6c68;
+  --platinum: #c2c4c6;
+  --plat-dark: #888b8e;
+  --charcoal: #181a1c;
+  --c2: #202325;
+  --c3: #282c2e;
+  --c4: #323638;
+  --c5: #3e4346;
+  --c6: #4c5155;
+  --border: rgba(194, 196, 198, 0.1);
+  --border-hi: rgba(194, 196, 198, 0.22);
+
+  --ok: #52b788;
+  --ok-d: rgba(82, 183, 136, 0.14);
+  --warn: #d4a847;
+  --warn-d: rgba(212, 168, 71, 0.14);
+  --err: #c94040;
+  --err-d: rgba(201, 64, 64, 0.14);
+  --info: #4a90d9;
+  --info-d: rgba(74, 144, 217, 0.14);
+
+  --bg: var(--charcoal);
+  --black: var(--charcoal);
+  --white: var(--c2);
+  --green: var(--ok);
+  --green-bg: var(--ok-d);
+  --green-text: var(--ok);
+  --amber: var(--warn);
+  --amber-bg: var(--warn-d);
+  --amber-text: var(--warn);
+  --red: var(--err);
+  --red-bg: var(--err-d);
+  --red-text: var(--err);
+  --blue: var(--info);
+  --blue-bg: var(--info-d);
+  --blue-text: var(--info);
+
+  --font-body: 'Chakra Petch', monospace;
+  --font-title: 'Chakra Petch', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --grid-offset-x: 0px;
+  --grid-offset-y: 0px;
+}

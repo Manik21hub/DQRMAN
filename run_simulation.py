@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import logging
 import os
+import signal
 import yaml
 
 
@@ -30,6 +31,109 @@ def wait_for_server(base_url='http://127.0.0.1:8080', max_attempts=15, delay_sec
     return False
 
 
+def server_supports_simulation_control(base_url='http://127.0.0.1:8080'):
+    """Return True when backend exposes simulation control endpoints."""
+    try:
+        response = requests.get(f"{base_url}/api/v1/simulation/config", timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _pids_listening_on_port(port):
+    """Best-effort PID discovery for processes bound to TCP port."""
+    pids = set()
+
+    lsof_path = shutil.which('lsof')
+    if lsof_path:
+        result = subprocess.run([lsof_path, '-ti', f'tcp:{port}'], capture_output=True, text=True, check=False)
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pids.add(int(line))
+        return sorted(pids)
+
+    fuser_path = shutil.which('fuser')
+    if fuser_path:
+        result = subprocess.run([fuser_path, f'{port}/tcp'], capture_output=True, text=True, check=False)
+        # fuser often writes PID list to stderr.
+        raw = f"{result.stdout} {result.stderr}"
+        for token in raw.replace('\n', ' ').split():
+            token = token.strip()
+            if token.isdigit():
+                pids.add(int(token))
+
+    return sorted(pids)
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def terminate_server_on_port(port=8080, grace_seconds=3.0):
+    """Terminate process(es) bound to port, escalating to SIGKILL if required."""
+    pids = _pids_listening_on_port(port)
+    if not pids:
+        return True
+
+    logging.info('Stopping stale server process(es) on port %d: %s', port, ', '.join(str(pid) for pid in pids))
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            logging.error('Permission denied while trying to stop PID %d on port %d', pid, port)
+            return False
+
+    deadline = time.time() + grace_seconds
+    while time.time() < deadline:
+        alive = [pid for pid in pids if _pid_alive(pid)]
+        if not alive:
+            return True
+        time.sleep(0.2)
+
+    alive = [pid for pid in pids if _pid_alive(pid)]
+    if alive:
+        logging.warning('Force-killing stubborn server process(es): %s', ', '.join(str(pid) for pid in alive))
+        for pid in alive:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                logging.error('Permission denied while force-stopping PID %d on port %d', pid, port)
+                return False
+
+    return True
+
+
+def start_server(args, base_url='http://127.0.0.1:8080'):
+    """Start backend server process and wait for health endpoint."""
+    logging.info('Spawning backend/server.py...')
+    env = os.environ.copy()
+    env['PYTHONPATH'] = os.getcwd()
+    server_proc = subprocess.Popen(
+        [sys.executable, 'backend/server.py', '--nodes', str(args.nodes), '--log-level', str(args.log_level).upper()],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env=env,
+    )
+
+    if not wait_for_server(base_url=base_url, max_attempts=20, delay_seconds=1):
+        logging.error('Server failed to start or become healthy.')
+        server_proc.terminate()
+        return False
+
+    logging.info('Server started successfully.')
+    return True
+
+
 def parse_args():
     """Parse command-line arguments for simulation runner."""
     parser = argparse.ArgumentParser(description='Run DQRMAN simulation')
@@ -50,27 +154,23 @@ def main():
         format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     )
 
-    # Check if server is already running
-    if not wait_for_server(max_attempts=2, delay_seconds=0.5):
-        logging.info("Server not detected. Spawning backend/server.py...")
-        # Use sys.executable to ensure we use the same venv/python
-        env = os.environ.copy()
-        env['PYTHONPATH'] = os.getcwd()
-        server_proc = subprocess.Popen(
-            [sys.executable, "backend/server.py"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env=env
-        )
-        # Wait for it to become healthy
-        if not wait_for_server(max_attempts=20, delay_seconds=1):
-            logging.error('Server failed to start or become healthy.')
-            server_proc.terminate()
+    base_url = 'http://127.0.0.1:8080'
+
+    # Check if server is already running.
+    if not wait_for_server(base_url=base_url, max_attempts=2, delay_seconds=0.5):
+        if not start_server(args, base_url=base_url):
             return 1
-        logging.info("Server started successfully.")
     else:
-        logging.info("Existing server detected. Using current instance.")
+        logging.info('Existing server detected. Validating API capabilities...')
+        if not server_supports_simulation_control(base_url=base_url):
+            logging.warning('Existing backend is stale (missing simulation control endpoints). Restarting...')
+            if not terminate_server_on_port(port=8080):
+                logging.error('Unable to stop stale server process on port 8080.')
+                return 1
+            if not start_server(args, base_url=base_url):
+                return 1
+        else:
+            logging.info('Existing server supports simulation controls. Using current instance.')
 
     logging.info('Simulation bootstrap complete.')
 
@@ -87,18 +187,29 @@ def main():
         lon = osm_config.get('fallback_lon', 77.2090)
         spread = osm_config.get('node_spread_m', 500)
         
-        logging.info(f"OSM enabled. Scattering nodes around {lat}, {lon} (spread: {spread}m).")
+        logging.info(f"OSM enabled. Applying simulation center at {lat}, {lon} (spread: {spread}m).")
         try:
-            loc_data = {
-                'lat': lat,
-                'lon': lon,
-                'accuracy': spread
-            }
-            res = requests.post("http://127.0.0.1:8080/api/v1/location", json=loc_data, timeout=5)
-            if res.status_code != 200:
-                logging.warning(f"Failed to scatter nodes via API. Status: {res.status_code}")
+            if server_supports_simulation_control(base_url=base_url):
+                sim_payload = {
+                    'node_count': args.nodes,
+                    'center_lat': lat,
+                    'center_lon': lon,
+                    'spread_m': spread,
+                }
+                res = requests.post(f"{base_url}/api/v1/simulation/start", json=sim_payload, timeout=8)
+                if res.status_code not in (200, 202):
+                    logging.warning(f"Failed to start simulation via API. Status: {res.status_code}")
+            else:
+                loc_data = {
+                    'lat': lat,
+                    'lon': lon,
+                    'accuracy': spread,
+                }
+                res = requests.post(f"{base_url}/api/v1/location", json=loc_data, timeout=5)
+                if res.status_code != 200:
+                    logging.warning(f"Failed to scatter nodes via location API. Status: {res.status_code}")
         except Exception as e:
-            logging.warning(f"Error scattering nodes via API: {e}")
+            logging.warning(f"Error applying map/simulation bootstrap: {e}")
 
     return 0
 

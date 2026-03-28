@@ -1,0 +1,131 @@
+#screen-events {
+  padding: 24px;
+  animation: screen-enter 260ms ease-out;
+}
+
+#events-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.metric-card {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--platinum);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.07);
+}
+
+#events-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+#events-search {
+  max-width: 260px;
+  width: 100%;
+  border: 1px solid var(--platinum);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: var(--font-body);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+#events-search:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(24, 95, 165, 0.14);
+}
+
+.pill-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  border: 1px solid var(--platinum);
+  border-radius: 99px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--white);
+  font-family: var(--font-title);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.pill:hover {
+  transform: translateY(-1px);
+}
+
+.pill.active {
+  border-color: var(--black);
+  color: var(--black);
+}
+
+#events-table-wrap {
+  border: 1px solid var(--platinum);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: calc(100vh - 230px);
+  background: var(--white);
+}
+
+#events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+#events-table th,
+#events-table td {
+  border-bottom: 1px solid var(--platinum);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+#events-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--white);
+}
+
+#events-table tr:nth-child(even) {
+  background: var(--bg);
+}
+
+.ev-alert { border-left: 3px solid var(--red); }
+.ev-warn { border-left: 3px solid var(--amber); }
+
+.event-json {
+  margin-top: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--white);
+  border: 1px solid var(--platinum);
+  border-radius: 8px;
+  padding: 8px;
+  font-family: var(--font-mono);
+}
+
+#events-footer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.6);
+}
