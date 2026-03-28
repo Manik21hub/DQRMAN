@@ -204,9 +204,9 @@
 <div class="pointer-events-none fixed inset-0 z-10 opacity-[0.03]" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAPFXbwY5LvP1gvj39HHKKAE5yYItToGN1gnILO2ZulrvkJrbrgnjaL-6hh7X-q4pXpDreyWGun9BafIOQXHSIWG4cVJ1UpPi61tv4uAW1HGIIjeGvTORbT3BkhKMRs8V8w0SGLirbl2CXJ3hm7AVhWf8VSoAjjKqS6mJ9q7QAGsiy43HyrwmVap0ZyUpTkHP-5kL3tt5praKIOf3AfaYUM_wVRnQX7wB7SZNHddES73kd4S77ETUlu1071Ji0hmk0xH8zWJupKZe0');"></div>
 <div class="pointer-events-none fixed inset-0 z-20 shadow-[inset_0_0_100px_rgba(0,0,0,0.8)]"></div>
 
-<script src="/vendor/d3.min.js"></script>
-  <script src="/vendor/react.production.min.js"></script>
-  <script src="/vendor/react-dom.production.min.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="/vendor/leaflet.min.js"></script>
   <script src="/vendor/socket.io.min.js"></script>
   <script src="/mesh.js"></script>
@@ -350,9 +350,23 @@
       }
 
       function onMsg(data) {
+        if (typeof data._latency_ms === 'number') {
+          const latency = Math.max(0, Math.round(data._latency_ms));
+          const statusLabel = document.getElementById('connection-status');
+          if (latency <= 500) {
+            statusLabel.textContent = `PUSH_LATENCY: ${latency}ms`;
+            statusLabel.style.color = '#22c55e';
+          } else {
+            statusLabel.textContent = `PUSH_LATENCY: ${latency}ms (HIGH)`;
+            statusLabel.style.color = '#ef4444';
+          }
+        }
+
         if (data.nodes && data.edges) {
-          currentNodes = data.nodes;
-          currentEdges = data.edges;
+          if (Array.isArray(data.nodes) && Array.isArray(data.edges)) {
+            currentNodes = data.nodes;
+            currentEdges = data.edges;
+          }
 
           // Update D3 visualization
           mesh.setData(data.nodes, data.edges);
@@ -424,9 +438,9 @@
               feedDiv.removeChild(feedDiv.lastChild);
             }
 
-            // Handle NODE_FAILED events: find affected edges and animate self-healing
-            if (event.event_type === 'NODE_FAILED' && event.destroyed_node_id) {
-              const destroyedNodeId = event.destroyed_node_id;
+            // Handle NODE_DESTROYED/NODE_FAILED events: animate self-healing.
+            if ((event.event_type === 'NODE_FAILED' || event.event_type === 'NODE_DESTROYED') && (event.destroyed_node_id || (event.payload && event.payload.node_id))) {
+              const destroyedNodeId = event.destroyed_node_id || (event.payload && event.payload.node_id);
               const oldEdgeKeys = [];
 
               // Find all edges connected to the destroyed node
@@ -457,6 +471,18 @@
               }
             }
 
+            // Highlight active trust path when server reports a routed message.
+            if (event.event_type === 'EVENT_ROUTE_PATH') {
+              const payload = event.payload || {};
+              const path = Array.isArray(payload.path) ? payload.path : [];
+              if (path.length >= 2) {
+                mesh.highlightPath(path, 1500);
+                if (window._meshMap) {
+                  window._meshMap.highlightPath(path, 1500);
+                }
+              }
+            }
+
             // Handle attack events forwarded via the events[] array
             if ((event.event_type === 'EVENT_REPLAY_DETECTED' || event.event_type === 'EVENT_SPOOFING_ATTEMPT') && event.target_node_id) {
               const nodeId = event.target_node_id;
@@ -470,10 +496,12 @@
 
       function onConnect() {
         document.getElementById('connection-status').textContent = 'Connection: connected';
+        document.getElementById('connection-status').style.color = '#22c55e';
       }
 
       function onDisconnect() {
         document.getElementById('connection-status').textContent = 'Connection: reconnecting';
+        document.getElementById('connection-status').style.color = '#facc15';
       }
 
       function toggleView(viewParam) {

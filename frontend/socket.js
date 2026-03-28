@@ -37,10 +37,18 @@ class MeshSocket {
 
     this.socket.on('mesh_state', (message) => {
       const payload = message && message.payload ? message.payload : {};
+      let latencyMs = null;
+      if (message && message.timestamp) {
+        const ts = Date.parse(message.timestamp);
+        if (!Number.isNaN(ts)) {
+          latencyMs = Date.now() - ts;
+        }
+      }
       this.onMessage({
         nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
         edges: Array.isArray(payload.edges) ? payload.edges : [],
         events: Array.isArray(payload.events) ? payload.events : [],
+        _latency_ms: latencyMs,
       });
     });
 

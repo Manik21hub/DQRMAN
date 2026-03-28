@@ -27,16 +27,19 @@ class MeshVisualizer {
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
     this.edgesGroup = this.svg.append('g').attr('class', 'edges');
+    this.pathGroup = this.svg.append('g').attr('class', 'active-path');
     this.nodesGroup = this.svg.append('g').attr('class', 'nodes');
 
     this.nodes = [];
     this.edges = [];
     this.attackTimeouts = new Map();
+    this.activePathEdgeKeys = new Set();
+    this.activePathTimeout = null;
 
     this.NODE_COLORS = {
-      ACTIVE: '#19E3E3',
-      DESTROYED: '#64748B',
-      QUARANTINED: '#F97316',
+      ACTIVE: '#22C55E',
+      DESTROYED: '#EF4444',
+      QUARANTINED: '#EF4444',
       HEALING: '#00BFFF',
       ISOLATED: '#8B5CF6',
       UNVERIFIED: '#FACC15'
@@ -77,6 +80,21 @@ class MeshVisualizer {
       .attr('stroke-opacity', 0.8)
       .attr('stroke-width', (d) => 1 + (Number(d.weight) || 0) * 4);
 
+    this.linkSelection
+      .style('stroke', (d) => {
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? '#FACC15' : '#14B8A6';
+      })
+      .attr('stroke-opacity', (d) => {
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? 1.0 : 0.8;
+      })
+      .attr('stroke-width', (d) => {
+        const base = 1 + (Number(d.weight) || 0) * 4;
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? base + 2.5 : base;
+      });
+
     this.nodeSelection = this.nodesGroup
       .selectAll('circle')
       .data(this.nodes, (d) => d.node_id)
@@ -99,9 +117,53 @@ class MeshVisualizer {
       .attr('y1', (d) => d.source.y)
       .attr('x2', (d) => d.target.x)
       .attr('y2', (d) => d.target.y)
-      .attr('stroke-width', (d) => 1 + (Number(d.weight) || 0) * 4);
+      .attr('stroke-width', (d) => {
+        const base = 1 + (Number(d.weight) || 0) * 4;
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? base + 2.5 : base;
+      })
+      .style('stroke', (d) => {
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? '#FACC15' : '#14B8A6';
+      })
+      .attr('stroke-opacity', (d) => {
+        const key = this._edgeKey(d);
+        return this.activePathEdgeKeys.has(key) ? 1.0 : 0.8;
+      });
 
     this.nodeSelection.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
+  }
+
+  _edgeKey(edge) {
+    const sourceId = typeof edge.source === 'object' ? edge.source.node_id : edge.source;
+    const targetId = typeof edge.target === 'object' ? edge.target.node_id : edge.target;
+    return `${sourceId}--${targetId}`;
+  }
+
+  highlightPath(pathNodeIds, durationMs = 1500) {
+    if (!Array.isArray(pathNodeIds) || pathNodeIds.length < 2) {
+      return;
+    }
+
+    this.activePathEdgeKeys.clear();
+    for (let i = 0; i < pathNodeIds.length - 1; i += 1) {
+      const a = pathNodeIds[i];
+      const b = pathNodeIds[i + 1];
+      this.activePathEdgeKeys.add(`${a}--${b}`);
+      this.activePathEdgeKeys.add(`${b}--${a}`);
+    }
+
+    this.update();
+
+    if (this.activePathTimeout) {
+      clearTimeout(this.activePathTimeout);
+    }
+
+    this.activePathTimeout = setTimeout(() => {
+      this.activePathEdgeKeys.clear();
+      this.update();
+      this.activePathTimeout = null;
+    }, durationMs);
   }
 
   showAttack(nodeId, className) {

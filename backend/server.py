@@ -26,6 +26,7 @@ EVENT_MESH_HEALED = 'EVENT_MESH_HEALED'
 EVENT_ANOMALY_ALERT = 'EVENT_ANOMALY_ALERT'
 EVENT_MESH_DEGRADED = 'EVENT_MESH_DEGRADED'
 EVENT_LOCATION_UPDATED = 'EVENT_LOCATION_UPDATED'
+EVENT_ROUTE_PATH = 'EVENT_ROUTE_PATH'
 
 app = Flask(__name__)
 CORS(app)
@@ -210,7 +211,8 @@ def _flush():
 	if not events_batch:
 		return
 
-	emit_mesh_update([], [], events_batch)
+	state = _current_mesh_state()
+	emit_mesh_update(state['nodes'], state['edges'], events_batch)
 
 
 @app.get('/api/v1/nodes')
@@ -429,6 +431,18 @@ def post_attack():
 	with emit_lock:
 		socketio.emit('attack_detected', ws_payload)
 
+	# Also queue event for mesh_state stream so event-feed updates in real time.
+	queue_event(
+		{
+			'event_type': event_type,
+			'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+			'payload': attack_payload,
+			'target_node_id': target_node_id,
+			'detected': detected,
+			'detection_reason': detection_reason,
+		}
+	)
+
 	return jsonify({'status': 'accepted', 'attack_type': attack_type}), 202
 
 
@@ -542,6 +556,72 @@ def delete_node(node_id):
 			'is_operational': operational,
 		}
 	)
+
+
+@app.post('/api/v1/route')
+def route_message():
+	"""POST /api/v1/route.
+
+	Accepts JSON:
+		{
+			'source_node_id': <string>,
+			'target_node_id': <string>,
+			'message_id': <string, optional>
+		}
+
+	Returns JSON:
+		On success: {'success': true, 'path': [..], 'duration_ms': <float>}
+		If no path: {'success': false, 'error': 'NO_PATH'}
+		If mesh unavailable: {'error': 'MESH_NOT_INITIALIZED'} with HTTP 503.
+
+	Implements:
+		FR-22 active trust-path calculation and dashboard path highlighting.
+	"""
+	if mesh is None:
+		return jsonify({'error': 'MESH_NOT_INITIALIZED'}), 503
+
+	data = request.get_json(silent=True) or {}
+	source_id = data.get('source_node_id')
+	target_id = data.get('target_node_id')
+	message_id = data.get('message_id', '')
+
+	if not source_id or not target_id:
+		return jsonify({'error': 'MISSING_SOURCE_OR_TARGET'}), 400
+
+	start = time.perf_counter()
+	path = mesh.compute_trust_path(source_id, target_id)
+	duration_ms = (time.perf_counter() - start) * 1000.0
+
+	event = {
+		'event_type': EVENT_ROUTE_PATH,
+		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+		'payload': {
+			'source_node_id': source_id,
+			'target_node_id': target_id,
+			'message_id': message_id,
+			'path': path,
+			'duration_ms': round(duration_ms, 2),
+			'path_found': bool(path),
+		},
+	}
+	queue_event(event)
+
+	log_event(
+		EVENT_ROUTE_PATH,
+		{
+			'source_node_id': source_id,
+			'target_node_id': target_id,
+			'message_id': message_id,
+			'path': path,
+			'duration_ms': round(duration_ms, 2),
+			'path_found': bool(path),
+		},
+	)
+
+	if not path:
+		return jsonify({'success': False, 'error': 'NO_PATH', 'duration_ms': round(duration_ms, 2)}), 200
+
+	return jsonify({'success': True, 'path': path, 'duration_ms': round(duration_ms, 2)})
 
 
 def _init_mesh(node_count):

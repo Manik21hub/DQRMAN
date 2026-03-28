@@ -21,6 +21,8 @@ class MeshMap {
 
     this._markers = {};
     this._edges = {};
+    this._activePathEdgeKeys = new Set();
+    this._activePathTimeout = null;
     this._attackCircles = {};
     this._ato = new Map();
     this._centered = false;
@@ -100,9 +102,9 @@ class MeshMap {
    */
   _updateMarkers(nodes) {
     const nodeStatusColors = {
-      'ACTIVE': '#19E3E3',
-      'DESTROYED': '#64748B',
-      'QUARANTINED': '#F97316',
+      'ACTIVE': '#22C55E',
+      'DESTROYED': '#EF4444',
+      'QUARANTINED': '#EF4444',
       'HEALING': '#00BFFF',
       'ISOLATED': '#8B5CF6'
     };
@@ -175,9 +177,10 @@ class MeshMap {
       ];
 
       const weight = edge.weight || 0;
-      const colour = '#14B8A6';
+      const isActivePath = this._activePathEdgeKeys.has(edgeKey) || this._activePathEdgeKeys.has(`${targetId}--${sourceId}`);
+      const colour = isActivePath ? '#FACC15' : '#14B8A6';
       const lineWeight = 1 + weight * 4;
-      const opacity = 0.2 + weight * 0.6;
+      const opacity = isActivePath ? 1.0 : (0.2 + weight * 0.6);
 
       if (this._edges[edgeKey]) {
         // Update existing polyline
@@ -187,7 +190,7 @@ class MeshMap {
         // Create new polyline
         const polyline = L.polyline(latlngs, {
           color: colour,
-          weight: lineWeight,
+          weight: isActivePath ? lineWeight + 2 : lineWeight,
           opacity,
           dashArray: null
         }).addTo(this.map);
@@ -372,6 +375,42 @@ class MeshMap {
     timeoutIds.push(cleanupTimeout);
 
     this._ato.set(nodeId, timeoutIds);
+  }
+
+  highlightPath(pathNodeIds, durationMs = 1500) {
+    if (!Array.isArray(pathNodeIds) || pathNodeIds.length < 2) {
+      return;
+    }
+
+    this._activePathEdgeKeys.clear();
+    for (let i = 0; i < pathNodeIds.length - 1; i += 1) {
+      const a = pathNodeIds[i];
+      const b = pathNodeIds[i + 1];
+      this._activePathEdgeKeys.add(`${a}--${b}`);
+      this._activePathEdgeKeys.add(`${b}--${a}`);
+    }
+
+    // Re-apply styling immediately with active-path emphasis.
+    this.setData(
+      Object.keys(this._markers).map((id) => {
+        const marker = this._markers[id];
+        const ll = marker.getLatLng();
+        return { node_id: id, lat: ll.lat, lon: ll.lng, status: marker._nodeStatus || 'ACTIVE' };
+      }),
+      Object.keys(this._edges).map((key) => {
+        const parts = key.split('--');
+        return { source: parts[0], target: parts[1], weight: 0.5 };
+      })
+    );
+
+    if (this._activePathTimeout) {
+      clearTimeout(this._activePathTimeout);
+    }
+
+    this._activePathTimeout = setTimeout(() => {
+      this._activePathEdgeKeys.clear();
+      this._activePathTimeout = null;
+    }, durationMs);
   }
 }
 
