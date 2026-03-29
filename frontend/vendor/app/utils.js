@@ -1,8 +1,9 @@
 window.DQRMAN = window.DQRMAN || {};
 
 window.DQRMAN.utils = {
-  toUTCClock() {
-    const now = new Date();
+  toUTCClock(offsetMs) {
+    const drift = Number(offsetMs || 0);
+    const now = new Date(Date.now() + (Number.isFinite(drift) ? drift : 0));
     return now.toISOString().slice(11, 19) + ' UTC';
   },
 

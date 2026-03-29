@@ -27,6 +27,7 @@ window.DQRMAN = window.DQRMAN || {};
 
   ns.api = {
     getHealth: () => request('/health'),
+    getMesh: () => request('/api/v1/mesh'),
     getNodes: () => request('/api/v1/nodes'),
     getEvents: () => request('/api/v1/events'),
     getScaleReport: () => request('/api/v1/scale-report'),

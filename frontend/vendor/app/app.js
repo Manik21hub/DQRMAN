@@ -3,6 +3,9 @@ window.DQRMAN = window.DQRMAN || {};
 (function startApp(ns) {
   let authCount = 0;
   let blockedCount = 0;
+  let serverClockOffsetMs = 0;
+  let snapshotPollTimer = null;
+  let clockSyncTimer = null;
 
   function classifyCounters(events) {
     authCount = events.filter((evt) => String(evt.event_type || '').toUpperCase().includes('AUTH')).length;
@@ -10,6 +13,40 @@ window.DQRMAN = window.DQRMAN || {};
       const e = String(evt.event_type || '').toUpperCase();
       return e.includes('REPLAY') || e.includes('SPOOF') || e.includes('JAMMING') || e.includes('DESTROYED');
     }).length;
+  }
+
+  function normalizeNodesEnvelope(nodesResp) {
+    const nodes = Array.isArray(nodesResp && nodesResp.nodes)
+      ? nodesResp.nodes
+      : Array.isArray(nodesResp)
+        ? nodesResp
+        : [];
+
+    const stats = (nodesResp && typeof nodesResp === 'object' && !Array.isArray(nodesResp) && nodesResp.stats)
+      ? nodesResp.stats
+      : null;
+
+    return { nodes, stats };
+  }
+
+  function normalizeMeshEnvelope(meshResp) {
+    const nodes = Array.isArray(meshResp && meshResp.nodes) ? meshResp.nodes : [];
+    const edges = Array.isArray(meshResp && meshResp.edges) ? meshResp.edges : [];
+    const stats = (meshResp && typeof meshResp === 'object' && meshResp.stats) ? meshResp.stats : null;
+    return { nodes, edges, stats };
+  }
+
+  function normalizeEventsEnvelope(eventsResp) {
+    if (Array.isArray(eventsResp)) return eventsResp;
+    if (eventsResp && Array.isArray(eventsResp.events)) return eventsResp.events;
+    return [];
+  }
+
+  function syncClockOffset(serverTimestamp) {
+    if (!serverTimestamp) return;
+    const serverMs = Date.parse(serverTimestamp);
+    if (!Number.isFinite(serverMs)) return;
+    serverClockOffsetMs = serverMs - Date.now();
   }
 
   function updateGlobalStatus(state) {
@@ -41,26 +78,68 @@ window.DQRMAN = window.DQRMAN || {};
     el.innerHTML = `<div class="d"></div>${ok ? 'MESH ACTIVE' : 'SERVICE DOWN'}`;
   }
 
+  async function fetchMeshSnapshot() {
+    try {
+      const meshResp = await ns.api.getMesh();
+      return normalizeMeshEnvelope(meshResp);
+    } catch (_err) {
+      // Backward compatibility path for older servers without /api/v1/mesh.
+      const nodesResp = await ns.api.getNodes();
+      const normalizedNodes = normalizeNodesEnvelope(nodesResp);
+      return {
+        nodes: normalizedNodes.nodes,
+        edges: [],
+        stats: normalizedNodes.stats,
+      };
+    }
+  }
+
+  async function refreshSnapshot(force) {
+    const wsConnected = ns.state.getState().transport.wsConnected;
+    if (!force && wsConnected) return;
+
+    try {
+      const [meshSnapshot, eventsResp] = await Promise.all([
+        fetchMeshSnapshot(),
+        ns.api.getEvents(),
+      ]);
+      ns.state.setMeshSnapshot(meshSnapshot.nodes, meshSnapshot.edges, meshSnapshot.stats);
+
+      const events = normalizeEventsEnvelope(eventsResp);
+      classifyCounters(events);
+      ns.state.appendEvents(events);
+    } catch (err) {
+      ns.state.setError(err.message || 'Snapshot refresh failed');
+    }
+  }
+
+  async function syncServerClock() {
+    try {
+      const health = await ns.api.getHealth();
+      syncClockOffset(health && health.timestamp);
+      const ok = String((health && health.status) || '').toLowerCase() === 'ok';
+      updateHealthBadge(ok);
+    } catch (_err) {
+      // Keep using the last known offset when health probe is unavailable.
+    }
+  }
+
   async function initialLoad() {
     try {
-      const [healthResp, nodesResp, eventsResp] = await Promise.all([
+      const [healthResp, meshSnapshot, eventsResp] = await Promise.all([
         ns.api.getHealth(),
-        ns.api.getNodes(),
+        fetchMeshSnapshot(),
         ns.api.getEvents(),
       ]);
 
       const ok = String(healthResp && healthResp.status || '').toLowerCase() === 'ok';
       updateHealthBadge(ok);
+      syncClockOffset(healthResp && healthResp.timestamp);
 
-      const nodes = Array.isArray(nodesResp && nodesResp.nodes) ? nodesResp.nodes : [];
-      const events = Array.isArray(eventsResp)
-        ? eventsResp
-        : Array.isArray(eventsResp && eventsResp.events)
-          ? eventsResp.events
-          : [];
+      const events = normalizeEventsEnvelope(eventsResp);
 
       classifyCounters(events);
-      ns.state.setMeshSnapshot(nodes, [], nodesResp && nodesResp.stats ? nodesResp.stats : null);
+      ns.state.setMeshSnapshot(meshSnapshot.nodes, meshSnapshot.edges, meshSnapshot.stats);
       ns.state.appendEvents(events);
 
       try {
@@ -85,6 +164,20 @@ window.DQRMAN = window.DQRMAN || {};
       }
     } catch (err) {
       ns.state.setError(err.message || 'Initial API bootstrap failed');
+    }
+  }
+
+  function startBackgroundSync() {
+    if (!snapshotPollTimer) {
+      snapshotPollTimer = setInterval(() => {
+        refreshSnapshot(false);
+      }, 4000);
+    }
+
+    if (!clockSyncTimer) {
+      clockSyncTimer = setInterval(() => {
+        syncServerClock();
+      }, 30000);
     }
   }
 
@@ -141,9 +234,12 @@ window.DQRMAN = window.DQRMAN || {};
     ns.screen4.mount(document.getElementById('screen-events'));
     ns.screen5.mount(document.getElementById('screen-node'));
 
+    const clock = document.getElementById('utc-clock');
+    if (clock) clock.textContent = ns.utils.toUTCClock(serverClockOffsetMs);
+
     setInterval(() => {
       const clock = document.getElementById('utc-clock');
-      if (clock) clock.textContent = ns.utils.toUTCClock();
+      if (clock) clock.textContent = ns.utils.toUTCClock(serverClockOffsetMs);
     }, 1000);
   }
 
@@ -152,8 +248,12 @@ window.DQRMAN = window.DQRMAN || {};
     ns.socketClient.connect();
     ns.state.subscribe((state, reason) => {
       if (reason === 'events') classifyCounters(state.events);
+      if (reason === 'ws' && !state.transport.wsConnected) {
+        refreshSnapshot(true);
+      }
       updateGlobalStatus(state);
     });
     initialLoad();
+    startBackgroundSync();
   });
 })(window.DQRMAN);

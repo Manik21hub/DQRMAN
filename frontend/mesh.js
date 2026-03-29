@@ -77,6 +77,7 @@ class MeshVisualizer {
       .data(this.edges, (d) => `${d.source?.node_id || d.source}-${d.target?.node_id || d.target}`)
       .join('line')
       .style('stroke', '#14B8A6')
+      .attr('stroke-dasharray', '1 8')
       .attr('stroke-opacity', 0.8)
       .attr('stroke-width', (d) => 1 + (Number(d.weight) || 0) * 4);
 

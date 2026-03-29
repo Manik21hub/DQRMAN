@@ -118,7 +118,8 @@ window.DQRMAN = window.DQRMAN || {};
         : ta === 'warn' || tb === 'warn' || weight < 0.55
           ? '#D4A847'
           : '#52B788';
-      const dash = ta === 'err' || tb === 'err' ? '3 8' : '4 8';
+      // Keep mesh links visibly dotted for all node-to-node connections.
+      const dash = ta === 'err' || tb === 'err' ? '1 10' : '1 8';
 
       let line = linkByKey.get(key);
       if (!line) {

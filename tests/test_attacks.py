@@ -62,6 +62,7 @@ def test_replay_attack_within_window(nodes, simulator):
         result = simulator.replay_attack_within_window(n1, n2)
         assert result.detected is True
         assert result.detection_reason == 'DUPLICATE_NONCE'
+    print('DUPLICATE_NONCE observed across within-window replay attempts')
 
 
 def test_spoof_attack(nodes, simulator):
@@ -71,6 +72,7 @@ def test_spoof_attack(nodes, simulator):
         result = simulator.spoof_attack(n1, n2)
         assert result.detected is True
         assert result.detection_reason == 'INVALID_SIGNATURE'
+    print('INVALID_SIGNATURE observed across spoof attempts')
 
 
 def test_zero_false_negatives_master(nodes, simulator):
@@ -99,6 +101,8 @@ def test_zero_false_negatives_master(nodes, simulator):
         for _ in range(100):
             res = simulator.spoof_attack(n1, n2)
             if not res.detected: undetected += 1
+
+    print(f'total undetected: {undetected}')
             
     assert undetected == 0
 

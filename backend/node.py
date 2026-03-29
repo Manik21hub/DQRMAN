@@ -89,7 +89,8 @@ class NodeState(enum.Enum):
     States are ordered by typical progression: initialization → cluster membership →
     active operation → potential degradation → quarantine → termination.
     """
-    UNVERIFIED = enum.auto()
+    INITIALIZING = enum.auto()
+    UNVERIFIED = INITIALIZING
     JOINING = enum.auto()
     ACTIVE = enum.auto()
     HEALING = enum.auto()

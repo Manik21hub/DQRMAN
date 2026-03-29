@@ -181,18 +181,28 @@ class MeshMap {
       const colour = isActivePath ? '#FACC15' : '#14B8A6';
       const lineWeight = 1 + weight * 4;
       const opacity = isActivePath ? 1.0 : (0.2 + weight * 0.6);
+      const dotPattern = '1 8';
 
       if (this._edges[edgeKey]) {
         // Update existing polyline
         this._edges[edgeKey].setLatLngs(latlngs);
-        this._edges[edgeKey].setStyle({ color: colour, weight: lineWeight, opacity });
+        this._edges[edgeKey].setStyle({
+          color: colour,
+          weight: lineWeight,
+          opacity,
+          dashArray: dotPattern,
+          lineCap: 'round',
+          lineJoin: 'round'
+        });
       } else {
         // Create new polyline
         const polyline = L.polyline(latlngs, {
           color: colour,
           weight: isActivePath ? lineWeight + 2 : lineWeight,
           opacity,
-          dashArray: null
+          dashArray: dotPattern,
+          lineCap: 'round',
+          lineJoin: 'round'
         }).addTo(this.map);
         this._edges[edgeKey] = polyline;
       }
@@ -281,7 +291,7 @@ class MeshMap {
             color: '#22C55E',  // green
             weight: 2 + weight * 4,  // slightly thicker
             opacity: 0.7,
-            dashArray: null  // solid
+            dashArray: '1 8'
           });
         }
       });
@@ -300,7 +310,7 @@ class MeshMap {
             color: '#14B8A6',  // blue
             weight: 1 + weight * 4,
             opacity: 0.2 + weight * 0.6,
-            dashArray: null
+            dashArray: '1 8'
           });
         }
       });
