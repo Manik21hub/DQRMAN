@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://dqrman.onrender.com/api/:path" },
+    { "source": "/health", "destination": "https://dqrman.onrender.com/health" },
+    { "source": "/socket.io/:path", "destination": "https://dqrman.onrender.com/socket.io/:path" },
+    { "source": "/osm-tiles/:path", "destination": "https://dqrman.onrender.com/osm-tiles/:path*" }
+  ]
+}
