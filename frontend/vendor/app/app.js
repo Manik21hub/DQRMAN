@@ -66,8 +66,17 @@ window.DQRMAN = window.DQRMAN || {};
     if (authText) authText.textContent = authCount.toLocaleString();
     if (blockText) blockText.textContent = blockedCount.toLocaleString();
     if (wsPill) {
-      wsPill.className = `npill ${state.transport.wsConnected ? 'ok' : 'err'}`;
-      wsPill.innerHTML = `<div class="d"></div>${state.transport.wsConnected ? `${blockedCount} ALERTS` : 'WS DOWN'}`;
+      const hasActiveMesh = Number(state.stats.active || 0) > 0;
+      if (state.transport.wsConnected) {
+        wsPill.className = 'npill ok';
+        wsPill.innerHTML = `<div class="d"></div>${blockedCount} ALERTS`;
+      } else if (hasActiveMesh) {
+        wsPill.className = 'npill warn';
+        wsPill.innerHTML = '<div class="d"></div>POLL MODE';
+      } else {
+        wsPill.className = 'npill err';
+        wsPill.innerHTML = '<div class="d"></div>WS DOWN';
+      }
     }
   }
 

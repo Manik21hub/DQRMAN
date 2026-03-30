@@ -114,10 +114,10 @@ window.DQRMAN = window.DQRMAN || {};
       const tb = tone(b.status);
       const weight = Number(edge.weight || 0);
       const c = ta === 'err' || tb === 'err'
-        ? '#5b657a'
+        ? '#3f4a5e'
         : ta === 'warn' || tb === 'warn' || weight < 0.55
-          ? '#D4A847'
-          : '#52B788';
+          ? '#8f6b23'
+          : '#2c7a5c';
       // Keep mesh links visibly dotted for all node-to-node connections.
       const dash = ta === 'err' || tb === 'err' ? '1 10' : '1 8';
 

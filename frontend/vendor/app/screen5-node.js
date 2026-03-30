@@ -49,10 +49,21 @@ window.DQRMAN = window.DQRMAN || {};
 
   async function rerouteFromSelected(nodeId) {
     const state = ns.state.getState();
-    const candidate = Array.from(state.nodes.values())
-      .filter((n) => n.node_id !== nodeId && String(n.status || '').toUpperCase() !== 'DESTROYED')
-      .map((n) => n.node_id)[0];
-    if (!candidate) {
+    const edgeDegree = new Map();
+    Array.from(state.edges.values()).forEach((edge) => {
+      edgeDegree.set(edge.source, (edgeDegree.get(edge.source) || 0) + 1);
+      edgeDegree.set(edge.target, (edgeDegree.get(edge.target) || 0) + 1);
+    });
+
+    const sourcePeers = Array.from(state.edges.values())
+      .filter((edge) => edge.source === nodeId || edge.target === nodeId).length;
+
+    const candidates = Array.from(state.nodes.values())
+      .filter((n) => n.node_id !== nodeId && String(n.status || '').toUpperCase() === 'ACTIVE')
+      .sort((a, b) => (edgeDegree.get(b.node_id) || 0) - (edgeDegree.get(a.node_id) || 0))
+      .map((n) => n.node_id);
+
+    if (!candidates.length) {
       const box = document.getElementById('node-action-msg');
       if (box) {
         box.style.display = 'block';
@@ -61,15 +72,54 @@ window.DQRMAN = window.DQRMAN || {};
       return;
     }
 
+    const box = document.getElementById('node-action-msg');
+    if (box) {
+      box.style.display = 'block';
+      box.textContent = 'Searching reroute path...';
+    }
+
     try {
-      const resp = await ns.api.reroute(nodeId, candidate, `ui-${Date.now()}`);
-      const box = document.getElementById('node-action-msg');
+      for (let i = 0; i < candidates.length; i += 1) {
+        const candidate = candidates[i];
+        const resp = await ns.api.reroute(nodeId, candidate, `ui-${Date.now()}-${i}`);
+        if (resp && resp.success && Array.isArray(resp.path) && resp.path.length >= 2) {
+          if (box) {
+            box.style.display = 'block';
+            box.textContent = `Reroute path: ${(resp.path || []).join(' -> ')}`;
+          }
+          return;
+        }
+      }
+
+      // If selected node is isolated, still provide a usable reroute preview
+      // by finding any valid path among connected active nodes.
+      const connectedCandidates = Array.from(state.nodes.values())
+        .filter((n) => String(n.status || '').toUpperCase() === 'ACTIVE' && (edgeDegree.get(n.node_id) || 0) > 0)
+        .sort((a, b) => (edgeDegree.get(b.node_id) || 0) - (edgeDegree.get(a.node_id) || 0))
+        .map((n) => n.node_id);
+
+      for (let i = 0; i < connectedCandidates.length; i += 1) {
+        for (let j = i + 1; j < connectedCandidates.length; j += 1) {
+          const source = connectedCandidates[i];
+          const target = connectedCandidates[j];
+          const resp = await ns.api.reroute(source, target, `ui-fallback-${Date.now()}-${i}-${j}`);
+          if (resp && resp.success && Array.isArray(resp.path) && resp.path.length >= 2) {
+            if (box) {
+              box.style.display = 'block';
+              box.textContent = `Selected node is isolated. Network reroute path: ${(resp.path || []).join(' -> ')}`;
+            }
+            return;
+          }
+        }
+      }
+
       if (box) {
         box.style.display = 'block';
-        box.textContent = resp && resp.success ? `Reroute path: ${(resp.path || []).join(' -> ')}` : 'Reroute failed: no path';
+        box.textContent = sourcePeers === 0
+          ? 'Reroute failed: selected node has no trust links.'
+          : 'Reroute failed: no reachable path to active peers.';
       }
     } catch (err) {
-      const box = document.getElementById('node-action-msg');
       if (box) {
         box.style.display = 'block';
         box.textContent = err.message || 'Reroute request failed';

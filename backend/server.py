@@ -405,6 +405,46 @@ def _compute_reroute_preview_path():
 	return []
 
 
+def _attempt_route_auto_heal(source_id, target_id):
+	"""Reconnect isolated active route endpoints to improve reroute success in degraded meshes.
+
+	Returns:
+		list[tuple[str, str]]: Repaired bidirectional link anchors as (isolated, anchor).
+	"""
+	if mesh is None:
+		return []
+
+	active_nodes = [node_id for node_id in mesh.get_active_nodes() if node_id in mesh._graph]
+	if len(active_nodes) < 2:
+		return []
+
+	repaired = []
+	for endpoint in (source_id, target_id):
+		if endpoint not in active_nodes:
+			continue
+
+		degree = mesh._graph.out_degree(endpoint) + mesh._graph.in_degree(endpoint)
+		if degree > 0:
+			continue
+
+		anchors = [node_id for node_id in active_nodes if node_id != endpoint]
+		if not anchors:
+			continue
+
+		anchors.sort(
+			key=lambda node_id: mesh._graph.out_degree(node_id) + mesh._graph.in_degree(node_id),
+			reverse=True,
+		)
+		anchor = anchors[0]
+
+		proximity_score = mesh.compute_proximity_score(endpoint, anchor)
+		mesh.update_edge(endpoint, anchor, auth_rate=0.82, proximity_score=proximity_score, recency=1.0)
+		mesh.update_edge(anchor, endpoint, auth_rate=0.82, proximity_score=proximity_score, recency=1.0)
+		repaired.append((endpoint, anchor))
+
+	return repaired
+
+
 def _stop_node_container(node_id):
 	"""Optionally stop a Docker container mapped to the destroyed node.
 
@@ -1109,38 +1149,65 @@ def route_message():
 
 	start = time.perf_counter()
 	path = mesh.compute_trust_path(source_id, target_id)
+	healed_links = []
+	if not path:
+		repaired_pairs = _attempt_route_auto_heal(source_id, target_id)
+		if repaired_pairs:
+			healed_links = [{'from': src, 'to': dst} for src, dst in repaired_pairs]
+			path = mesh.compute_trust_path(source_id, target_id)
+
+			heal_payload = {
+				'source_node_id': source_id,
+				'target_node_id': target_id,
+				'healed_links': healed_links,
+			}
+			queue_event(
+				{
+					'event_type': EVENT_MESH_HEALED,
+					'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+					'payload': heal_payload,
+				}
+			)
+			log_event(EVENT_MESH_HEALED, heal_payload)
+
 	duration_ms = (time.perf_counter() - start) * 1000.0
+	route_payload = {
+		'source_node_id': source_id,
+		'target_node_id': target_id,
+		'message_id': message_id,
+		'path': path,
+		'duration_ms': round(duration_ms, 2),
+		'path_found': bool(path),
+		'auto_healed_links': healed_links,
+	}
 
 	event = {
 		'event_type': EVENT_ROUTE_PATH,
 		'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
-		'payload': {
-			'source_node_id': source_id,
-			'target_node_id': target_id,
-			'message_id': message_id,
-			'path': path,
-			'duration_ms': round(duration_ms, 2),
-			'path_found': bool(path),
-		},
+		'payload': route_payload,
 	}
 	queue_event(event)
 
-	log_event(
-		EVENT_ROUTE_PATH,
-		{
-			'source_node_id': source_id,
-			'target_node_id': target_id,
-			'message_id': message_id,
-			'path': path,
-			'duration_ms': round(duration_ms, 2),
-			'path_found': bool(path),
-		},
-	)
+	log_event(EVENT_ROUTE_PATH, route_payload)
 
 	if not path:
-		return jsonify({'success': False, 'error': 'NO_PATH', 'duration_ms': round(duration_ms, 2)}), 200
+		return jsonify(
+			{
+				'success': False,
+				'error': 'NO_PATH',
+				'duration_ms': round(duration_ms, 2),
+				'auto_healed_links': healed_links,
+			}
+		), 200
 
-	return jsonify({'success': True, 'path': path, 'duration_ms': round(duration_ms, 2)})
+	return jsonify(
+		{
+			'success': True,
+			'path': path,
+			'duration_ms': round(duration_ms, 2),
+			'auto_healed_links': healed_links,
+		}
+	)
 
 
 def _init_mesh(node_count):
